@@ -1,0 +1,77 @@
+version: '3.12'
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: ai_postgres
+    environment:
+      POSTGRES_DB: ai_projects
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ai_network
+
+  redis:
+    image: redis:8
+    container_name: ai_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    networks:
+      - ai_network
+
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: unless-stopped
+    networks:
+      - ai_network
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "8090:80"
+    depends_on:
+      - postgres
+
+  bot:
+    build: .
+    container_name: ai_project_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - APP_ENV=production
+    env_file:
+      - .env
+    restart: always
+    networks:
+      - ai_network
+    volumes:
+      - ./app:/app/app
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+
+networks:
+  ai_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
