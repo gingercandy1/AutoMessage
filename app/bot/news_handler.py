@@ -13,6 +13,7 @@ from app.database.models import ContentItem
 from app.logger import AppLogger
 from app.bot.search_state import set_pending, clear_pending, is_pending
 from app.services.news_service import NewsService
+from app.bot.renderers.base import BaseProjectRenderer
 
 logger = AppLogger.get(__name__)
 router = Router()
@@ -33,7 +34,7 @@ def _get_fav_id(short_id: str) -> str | None:
     return _fav_id_cache.get(short_id)
 
 
-class NewsProjectRenderer:
+class NewsProjectRenderer(BaseProjectRenderer):
     CATEGORY_ICONS = {
         "ai": "🤖",
         "llm": "🧠",
@@ -58,37 +59,6 @@ class NewsProjectRenderer:
         if not source:
             return "📰"
         return NewsProjectRenderer.SOURCE_ICONS.get(source, "📰")
-
-    @staticmethod
-    def _format_count(n: int | None) -> str:
-        n = n or 0
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if n >= 1_000:
-            return f"{n / 1_000:.1f}K"
-        return str(n)
-
-    @staticmethod
-    def _time_ago(dt: datetime | None) -> str | None:
-        if not dt:
-            return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        delta = now - dt
-        seconds = delta.total_seconds()
-        if seconds < 0:
-            return "刚刚"
-        if seconds < 3600:
-            return f"{int(seconds // 60)}分钟前"
-        if seconds < 86400:
-            return f"{int(seconds // 3600)}小时前"
-        days = int(seconds // 86400)
-        if days < 30:
-            return f"{days}天前"
-        if days < 365:
-            return f"{days // 30}个月前"
-        return f"{days // 365}年前"
 
     @staticmethod
     def _score_bar(score: float, segments: int = 10) -> str:

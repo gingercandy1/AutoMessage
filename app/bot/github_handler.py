@@ -27,88 +27,15 @@ class GitHubProjectRenderer(BaseProjectRenderer):
     }
 
     @staticmethod
-    def _license_icon(license_name: str | None) -> str:
-        if not license_name:
-            return "📄"
-        
-        name = license_name.lower()
-        
-        # 1. 精确匹配
-        exact_map = {
-            "mit": "🔓",
-            "apache-2.0": "📜",
-            "apache license 2.0": "📜",
-            "gpl-3.0": "©️",
-            "gnu general public license v3.0": "©️",
-            "gpl-2.0": "©️",
-            "gnu general public license v2.0": "©️",
-            "bsd-3-clause": "🅱️",
-            "bsd 3-clause \"new\" or \"revised\" license": "🅱️",
-            "mpl-2.0": "🦊",
-            "mozilla public license 2.0": "🦊",
-        }
-        if name in exact_map:
-            return exact_map[name]
-            
-        # 2. 关键词模糊匹配
-        keyword_map = {
-            "mit": "🔓",
-            "apache": "📜",
-            "gpl": "©️",
-            "bsd": "🅱️",
-            "mozilla": "🦊",
-            "creative commons": "🎨",
-            "cc-": "🎨",
-        }
-        for kw, icon in keyword_map.items():
-            if kw in name:
-                return icon
-                
-        return "📄"
-
-    @staticmethod
     def _language_icon(language: str | None) -> str:
         if not language:
             return "📦"
         return GitHubProjectRenderer.LANGUAGE_ICONS.get(language.lower(), "📦")
 
     @staticmethod
-    def _format_count(n: int | None) -> str:
-        n = n or 0
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if n >= 1_000:
-            return f"{n / 1_000:.1f}K"
-        return str(n)
-
-    @staticmethod
     def _score_bar(score: float, segments: int = 10) -> str:
         filled = max(0, min(segments, round(score)))
         return "▰" * filled + "▱" * (segments - filled)
-
-    @staticmethod
-    def _time_ago(dt: datetime | None) -> str | None:
-        """把时间转换成相对时间描述，如 '3天前更新'"""
-        if not dt:
-            return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        delta = now - dt
-
-        seconds = delta.total_seconds()
-        if seconds < 0:
-            return "刚刚"
-        if seconds < 3600:
-            return f"{int(seconds // 60)}分钟前"
-        if seconds < 86400:
-            return f"{int(seconds // 3600)}小时前"
-        days = int(seconds // 86400)
-        if days < 30:
-            return f"{days}天前"
-        if days < 365:
-            return f"{days // 30}个月前"
-        return f"{days // 365}年前"
 
     @staticmethod
     def card(project, index: int) -> str:
