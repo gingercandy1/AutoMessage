@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, timezone
 from html import escape
 from typing import Any, Callable, Union
@@ -154,6 +155,20 @@ class NewsProjectRenderer:
 
             if s.one_liner:
                 detail_lines.append(escape(s.one_liner))
+
+            # Q3 准确性：展示原文摘录，让用户可核对 AI 未断章取义
+            if getattr(s, "source_quotes", None):
+                quotes = s.source_quotes
+                if isinstance(quotes, str):
+                    try:
+                        quotes = json.loads(quotes)
+                    except (json.JSONDecodeError, TypeError):
+                        quotes = []
+                if isinstance(quotes, list):
+                    for q in quotes[:2]:
+                        qt = escape(str(q).strip())
+                        if qt:
+                            detail_lines.append(f"❝ {qt}")
 
             if s.use_cases:
                 uc_text = escape(str(s.use_cases).strip())

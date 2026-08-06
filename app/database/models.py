@@ -136,6 +136,9 @@ class Summary(Base):
     install_step = Column(Text, nullable=True, comment="安装/使用步骤")
     maturity_level = Column(Text, nullable=True, comment="成熟度评估")
 
+    # 新闻专用：原文摘录（保障准确性，Q3）。Q6 独立 schema 字段之一。
+    source_quotes = Column(JSON, nullable=True, comment="新闻原文摘录列表（JSON 数组，2-3句）")
+
     # 元数据
     model_used = Column(String(100), nullable=False, comment="使用的 AI 模型（ollama/openrouter/openai）")
     processing_status = Column(String(50), nullable=False, default="success", comment="处理状态（success/failed/pending）")

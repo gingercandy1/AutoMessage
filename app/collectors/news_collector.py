@@ -215,48 +215,120 @@ class NewsCollector(BaseCollector):
         logger.info(f"✅ RSS: {len(normalized)} 条")
         return normalized[:config.max_items]
 
+    def _levenshtein_ratio(self, a: str, b: str) -> float:
+        """归一化 Levenshtein 相似度 [0,1]（1=完全相同）。ADR-0001 Q10 v1 方案。"""
+        a = (a or "").strip().lower()
+        b = (b or "").strip().lower()
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        # 快速短路
+        if a == b:
+            return 1.0
+        la, lb = len(a), len(b)
+        if abs(la - lb) / max(la, lb) > 0.5:
+            return 0.0
+        prev = list(range(lb + 1))
+        for i, ca in enumerate(a, 1):
+            cur = [i]
+            for j, cb in enumerate(b, 1):
+                cost = 0 if ca == cb else 1
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost))
+            prev = cur
+        dist = prev[lb]
+        return 1.0 - dist / max(la, lb)
+
+    def _normalize_url(self, url: str) -> str:
+        """归一化 URL：去 scheme、尾部斜杠、www.、查询参数排序，用于精确去重。"""
+        if not url:
+            return ""
+        u = url.strip().lower()
+        u = u.replace("https://", "").replace("http://", "").replace("www.", "")
+        u = u.split("?")[0].split("#")[0]
+        if u.endswith("/"):
+            u = u[:-1]
+        return u
+
     def _deduplicate(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """去重：基于 URL 和标题相似度"""
-        if not settings.news_dedup_enabled:
+        """去重 + 聚类（Q10）。
+
+        两阶段：
+          1) exact_url：归一化 URL 完全相同 -> 同一簇
+          2) title_similarity：标题 Levenshtein 相似度 >= 0.85 -> 同一簇
+        返回保留项（每簇第一条为 canonical），并把簇信息暂存到 self._last_clusters。
+        """
+        if not settings.news_dedup_enabled or not items:
+            self._last_clusters = []
             return items
-        
-        seen_urls: Set[str] = set()
-        seen_titles: Dict[str, Dict[str, Any]] = {}  # 简化：只用标题前 50 字符
-        unique = []
-        
-        for item in items:
-            url = item.get("url", "").strip()
-            title = item.get("title", "").strip()[:50].lower()
-            
-            # URL 去重
-            if url and url in seen_urls:
+
+        clusters: List[List[int]] = []          # 每个簇是 items 下标列表
+        url_to_cluster: Dict[str, int] = {}
+        title_to_cluster: List[tuple] = []       # (norm_title, cluster_idx)
+
+        unique: List[Dict[str, Any]] = []
+        for idx, item in enumerate(items):
+            url = self._normalize_url(item.get("url", ""))
+            title = (item.get("title", "") or "").strip().lower()
+
+            # 1) exact url
+            if url and url in url_to_cluster:
+                clusters[url_to_cluster[url]].append(idx)
                 continue
-            
-            # 标题去重（简单版本）
-            if title and title in seen_titles:
+            # 2) title similarity
+            merged = False
+            for t_norm, c_idx in title_to_cluster:
+                if self._levenshtein_ratio(title, t_norm) >= 0.85:
+                    clusters[c_idx].append(idx)
+                    merged = True
+                    break
+            if merged:
                 continue
-            
-            if url:
-                seen_urls.add(url)
-            if title:
-                seen_titles[title] = item
-            
+
+            # 新簇
+            new_c = len(clusters)
+            clusters.append([idx])
             unique.append(item)
-        
-        logger.info(f"🔄 去重: {len(items)} -> {len(unique)}")
+            if url:
+                url_to_cluster[url] = new_c
+            if title:
+                title_to_cluster.append((title, new_c))
+
+        # 只在簇大小>1 时记录（用于写入 NewsCluster）
+        self._last_clusters = [grp for grp in clusters if len(grp) > 1]
+        logger.info(f"🔄 去重+聚类: {len(items)} -> {len(unique)} (簇:{len(self._last_clusters)})")
         return unique
+
+    def _write_clusters(self, item_id_by_index: Dict[int, int]):
+        """将本次批次内的簇写入 NewsCluster 表（canonical=簇首）。"""
+        if not getattr(self, "_last_clusters", None):
+            return
+        db = SessionLocal()
+        try:
+            for grp in self._last_clusters:
+                member_ids = [item_id_by_index[i] for i in grp if i in item_id_by_index]
+                if len(member_ids) < 2:
+                    continue
+                db.add(NewsCluster(
+                    canonical_item_id=member_ids[0],
+                    member_item_ids=member_ids,
+                    cluster_method="exact_url|title_similarity",
+                ))
+            db.commit()
+        finally:
+            db.close()
 
     async def fetch(self, config: NewsConfig) -> list[dict[str, Any]]:
         """抓取新闻"""
         hn_items = await self._fetch_hn_stories(config)
         rss_items = await self._fetch_rss_feeds(config)
-        
+
         all_items = hn_items + rss_items
         all_items = self._deduplicate(all_items)
-        
+
         # 限制数量
         all_items = all_items[:config.max_items]
-        
+
         await self.save(all_items)
         return all_items
 
@@ -265,9 +337,10 @@ class NewsCollector(BaseCollector):
         db = SessionLocal()
         now = datetime.now(timezone.utc)
         today = now.date()
+        item_id_by_index: Dict[int, int] = {}
         
         try:
-            for item in records:
+            for index, item in enumerate(records):
                 source = item["source"]
                 external_id = item["external_id"]
                 
@@ -321,8 +394,10 @@ class NewsCollector(BaseCollector):
                     )
                     db.add(content_item)
                     db.flush()
+
+                item_id_by_index[index] = content_item.id
                 
-                # 保存 MetricSnapshot
+                # 保存 MetricSnapshot（ADR-0002 键：(source, external_id, captured_date)）
                 stmt = insert(MetricSnapshot).values(
                     content_item_id=content_item.id,
                     source=source,
@@ -333,7 +408,7 @@ class NewsCollector(BaseCollector):
                     captured_date=today,
                     captured_at=now,
                 ).on_conflict_do_update(
-                    index_elements=["source", "external_id", "category", "captured_date"],
+                    index_elements=["source", "external_id", "captured_date"],
                     set_={
                         "content_item_id": content_item.id,
                         "rank": None,
@@ -343,6 +418,9 @@ class NewsCollector(BaseCollector):
                 )
                 db.execute(stmt)
             
+            # 写入新闻聚类（Q10）
+            self._write_clusters(item_id_by_index)
+
             db.commit()
             logger.info(f"✅ 新闻入库完成")
         finally:

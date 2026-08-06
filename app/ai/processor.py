@@ -84,6 +84,7 @@ class BatchSummary:
                         tags=json.dumps(summary_data.get("tags", [])),
                         install_step=summary_data.get("install_step", ""),
                         maturity_level=summary_data.get("maturity_level", ""),
+                        source_quotes=summary_data.get("source_quotes", None),  # Q3/Q6 新闻原文摘录
                         model_used=summary_data.get("model", self.provider),
                         token_cost=summary_data.get("token_cost", 0.0)
                     )

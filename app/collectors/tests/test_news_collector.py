@@ -151,25 +151,25 @@ class TestNewsCollector:
         assert result is None
 
     def test_deduplicate_url(self, collector):
-        """测试 URL 去重"""
+        """测试 URL 去重（标题不同 → 仅按归一化 URL 去重）"""
         items = [
-            {"url": "https://example.com/1", "title": "Title 1"},
-            {"url": "https://example.com/2", "title": "Title 2"},
-            {"url": "https://example.com/1", "title": "Title 1 Duplicate"},
+            {"url": "https://example.com/1", "title": "Alpha release announced"},
+            {"url": "https://example.com/2", "title": "Beta framework launched"},
+            {"url": "https://example.com/1/", "title": "Alpha release announced"},  # 尾部斜杠归一化
         ]
         unique = collector._deduplicate(items)
         assert len(unique) == 2
         assert unique[0]["url"] == "https://example.com/1"
         assert unique[1]["url"] == "https://example.com/2"
 
-    def test_deduplicate_title(self, collector):
-        """测试标题去重"""
+    def test_deduplicate_title_similarity(self, collector):
+        """测试标题相似度去重（Q10：Levenshtein >= 0.85 视为同簇）"""
         items = [
-            {"url": "https://example.com/1", "title": "Same Title"},
-            {"url": "https://example.com/2", "title": "Same Title"},
+            {"url": "https://example.com/1", "title": "OpenAI releases GPT-5 model"},
+            {"url": "https://example.com/2", "title": "OpenAI releases GPT-5 models"},  # 仅差一个 s
         ]
         unique = collector._deduplicate(items)
-        assert len(unique) == 1
+        assert len(unique) == 1  # 标题高度相似 → 归入同一簇
 
 
 class TestHackerNewsClient:
