@@ -8,6 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 
 from app.bot.search_state import clear_pending, is_pending, set_pending
+from app.bot.renderers.base import BaseProjectRenderer
 from app.logger import AppLogger
 from app.services.github_service import GithubService
 
@@ -17,7 +18,7 @@ service = GithubService()
 PAGE_SIZE = 6
 
 
-class GitHubProjectRenderer:
+class GitHubProjectRenderer(BaseProjectRenderer):
     LANGUAGE_ICONS = {
         "python": "🐍", "java": "☕", "rust": "🦀", "go": "🐹",
         "javascript": "🟨", "typescript": "🔷", "c#": "💎", "php": "🐘",

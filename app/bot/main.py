@@ -10,6 +10,7 @@ from app.bot.core_handlers import BOT_COMMANDS, router as core_router
 from app.bot.github_handler import router as github_router
 from app.bot.huggingface_handler import router as huggingface_router
 from app.bot.toolbox_handler import router as toolbox_router
+from app.bot.subscription_handler import router as subscription_router
 from app.logger import AppLogger
 from app.scheduler.jobs import JobScheduler
 
@@ -34,6 +35,7 @@ class BotManager:
         self.dp.include_router(github_router)
         self.dp.include_router(huggingface_router)
         self.dp.include_router(toolbox_router)
+        self.dp.include_router(subscription_router)
 
         self.dp.update.outer_middleware(EnsureUserMiddleware())
         self.dp.message.middleware(ThrottlingMiddleware(min_interval=0.8))

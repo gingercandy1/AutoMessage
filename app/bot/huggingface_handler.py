@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 
 from app.api.huggingface_client import HuggingFaceClient
+from app.bot.renderers.base import BaseProjectRenderer
 from app.database.models import ContentItem
 from app.logger import AppLogger
 from app.bot.search_state import set_pending, clear_pending, is_pending
@@ -21,7 +22,7 @@ PAGE_SIZE = 6
 service = HuggingFaceService()
 
 
-class HuggingfaceProjectRenderer:
+class HuggingfaceProjectRenderer(BaseProjectRenderer):
     PIPELINE_ICONS = {
         "text-generation": "📝",
         "text-to-image": "🖼",
@@ -197,6 +198,9 @@ class HuggingfaceKeyboards:
             ],
             [
                 InlineKeyboardButton(text="📈 Trending 趋势", callback_data="huggingface_trending_now"),
+                InlineKeyboardButton(text="🆕 近期更新", callback_data="huggingface_recently_updated"),
+            ],
+            [
                 InlineKeyboardButton(text="🔍 搜索模型", callback_data="huggingface_search"),
             ],
             [
@@ -361,6 +365,15 @@ class HuggingfaceProjectViews:
         )
 
     @staticmethod
+    def recently_updated() -> HuggingfacePaginatedListView:
+        return HuggingfacePaginatedListView(
+            fetcher=lambda: service.get_recently_updated(limit=200),
+            header="🆕 <b>近期更新的模型</b>",
+            prefix="huggingface_recently_updated",
+            empty_message="近期没有模型更新",
+        )
+
+    @staticmethod
     def my_favorites(telegram_id: int) -> HuggingfacePaginatedListView:
         return HuggingfacePaginatedListView(
             fetcher=lambda: service.get_user_favorites(telegram_id),
@@ -386,6 +399,8 @@ class HuggingfaceProjectViews:
             await HuggingfaceProjectViews.longtime_hot().render(query.message, page=page)
         elif prefix == "huggingface_trending_now":
             await HuggingfaceProjectViews.trend().render(query.message, page=page)
+        elif prefix == "huggingface_recently_updated":
+            await HuggingfaceProjectViews.recently_updated().render(query.message, page=page)
         elif prefix == "huggingface_my_favorites":
             await HuggingfaceProjectViews.my_favorites(query.from_user.id).render(query.message, page=page)
         elif prefix.startswith("huggingface_pipeline_"):
@@ -446,6 +461,17 @@ async def longtime_hot(event: Union[Message, CallbackQuery]):
     else:
         target = event
     await HuggingfaceProjectViews.longtime_hot().render(target, page=0)
+
+
+@router.message(Command("huggingface_recently_updated"))
+@router.callback_query(F.data == "huggingface_recently_updated")
+async def recently_updated(event: Union[Message, CallbackQuery]):
+    if isinstance(event, CallbackQuery):
+        await event.answer("🔄 加载中...")
+        target = event.message
+    else:
+        target = event
+    await HuggingfaceProjectViews.recently_updated().render(target, page=0)
 
 
 @router.message(Command("huggingface_trending_now"))

@@ -13,8 +13,10 @@ from app.database.models import ContentItem, MetricSnapshot
 
 @dataclass
 class HuggingFaceConfig:
-    category_key:str = ""
-    limit:int = 100
+    category_key: str = ""
+    limit: int = 100
+    sort: str = "trendingScore"   # trendingScore | lastModified | downloads | likes
+    search_type: str = "hf_hot"   # hf_hot (popular) | hf_trend (recently updated)
 
 class HuggingFaceCollector(BaseCollector):
     NAME = "huggingface"
@@ -47,7 +49,7 @@ class HuggingFaceCollector(BaseCollector):
         if not pipeline_tag:
             raise ValueError(f"不支援的類別: {category_key}")
 
-        models = await self.client.fetch_by_category(category_key, limit)
+        models = await self.client.fetch_by_category(category_key, limit, sort=config.sort)
         if not models: return 0
 
         records = []
@@ -65,9 +67,11 @@ class HuggingFaceCollector(BaseCollector):
                 "created_at": m.get("createdAt"),
                 "library_name": m.get("library_name"),
                 "trending_score": m.get("trendingScore"),
+                "last_modified": m.get("lastModified"),
                 "description": m.get("description", ""),
                 "author": m["id"].split("/")[0] if "/" in m["id"] else "",
-                "private": m["private"]
+                "private": m["private"],
+                "search_type": config.search_type,
             }
             record.update(parsed_tags)
             records.append(record)
@@ -90,8 +94,10 @@ class HuggingFaceCollector(BaseCollector):
                     "downloads": r["downloads"],
                     "rank": r["rank"],
                     "trending_score": r["trending_score"],
+                    "last_modified": r.get("last_modified"),
                     "library_name": r["library_name"],
                     "model_created_at": r["created_at"],
+                    "search_type": r.get("search_type", "hf_hot"),
                     "license": r.get("license"),
                     "tags": r.get("tags", []),
                     "private": r["private"]
@@ -156,11 +162,20 @@ class HuggingFaceCollector(BaseCollector):
     def configs(self):
         configs = []
         for key in HuggingFaceClient.PIPELINE_MAP.keys():
-            config = HuggingFaceConfig(
+            # 热门：按 trendingScore 排序
+            configs.append(HuggingFaceConfig(
                 category_key=key,
-                limit=100
-            )
-            configs.append(config)
+                limit=100,
+                sort="trendingScore",
+                search_type="hf_hot",
+            ))
+            # 更新趋势：按 lastModified 倒序（ADR-0001 §4）
+            configs.append(HuggingFaceConfig(
+                category_key=key,
+                limit=100,
+                sort="lastModified",
+                search_type="hf_trend",
+            ))
         return configs
 
 async def main():

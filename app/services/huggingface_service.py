@@ -258,6 +258,29 @@ class HuggingFaceService:
         finally:
             db.close()
 
+    def get_recently_updated(self, limit: int = 100, days: int = 30) -> list[type[ContentItem]]:
+        """近期被活跃维护的模型（ADR-0001 §4 更新趋势）。
+
+        按 metrics.last_modified 倒序取最近 days 天内有更新的模型。
+        注意：ADR-0002 下每个模型单行 upsert，故用 last_modified 时间排序，
+        而非 search_type 标记（单行无法同时标记 hot+trend）。
+        """
+        from datetime import timedelta
+        db: Session = SessionLocal()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            return (
+                db.query(ContentItem)
+                .filter(ContentItem.source == self.NAME)
+                .filter(ContentItem.metrics["last_modified"].as_string().isnot(None))
+                .filter(ContentItem.metrics["last_modified"].as_string() >= cutoff.isoformat())
+                .order_by(ContentItem.metrics["last_modified"].as_string().desc())
+                .limit(limit)
+                .all()
+            )
+        finally:
+            db.close()
+
     def toggle_favorite(self, telegram_id: int, model_id: str) -> dict:
         """
         切換收藏狀態。

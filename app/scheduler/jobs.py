@@ -2,10 +2,15 @@ import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import select
+
 from app.ai.processor import BatchSummary
 from app.collectors.base import BaseCollector, BaseAnalyzer
 from app.config import settings
+from app.database import SessionLocal
+from app.database.models import Subscription
 from app.logger import AppLogger
+from app.services.publisher import DailyPublisher
 
 from app.collectors.github_collector import GitHubCollector, GitHubTrendingCollector
 from app.collectors.github_analyzer import GitHubAnalyzer
@@ -36,6 +41,13 @@ class JobScheduler:
             CronTrigger(hour=8, minute=0),
             id="daily_collect",
             name="每日采集项目"
+        )
+        # 每天 9:00 主动推送（ADR-0003 bot push）
+        self.scheduler.add_job(
+            self.daily_push,
+            CronTrigger(hour=9, minute=0),
+            id="daily_push",
+            name="每日主动推送"
         )
 
         self.scheduler.start()
@@ -80,7 +92,37 @@ class JobScheduler:
         except Exception as e:
             logger.error(f"❌ 晚间处理调度失败: {e}")
 
-    async def start(self):
+    async def daily_push(self):
+        """定时主动推送（ADR-0003 bot push）：推给所有已订阅用户/群组。"""
+        logger.info("📤 启动主动推送流程...")
+        db = SessionLocal()
+        try:
+            # 去重取所有活跃订阅的 telegram_id
+            rows = (
+                db.query(Subscription.telegram_id)
+                .filter(Subscription.is_active == 1)
+                .distinct()
+                .all()
+            )
+            subscribers = [r[0] for r in rows]
+        finally:
+            db.close()
+
+        if not subscribers:
+            logger.info("📭 无订阅用户，跳过推送")
+            return
+
+        publisher = DailyPublisher()
+        try:
+            for tg_id in subscribers:
+                try:
+                    await publisher.publish_to_user(tg_id)
+                    logger.info(f"✅ 已推送给 {tg_id}")
+                except Exception as e:
+                    logger.error(f"❌ 推送给 {tg_id} 失败: {e}")
+                await asyncio.sleep(0.5)
+        finally:
+            await publisher.close()
         await self.setup()
         logger.info("⏰ 定时调度已启动，等待执行...")
         await asyncio.Event().wait()

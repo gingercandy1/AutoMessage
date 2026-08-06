@@ -41,6 +41,8 @@ BOT_COMMANDS = [
     BotCommand(command="github_start", description="🐙 查看 GitHub 项目"),
     BotCommand(command="huggingface_start", description="🤗 查看 HuggingFace 模型"),
     BotCommand(command="news_start", description="📰 查看 AI/科技新闻"),
+    BotCommand(command="subscribe", description="🔔 订阅每日推送"),
+    BotCommand(command="unsubscribe", description="🔕 取消每日推送"),
     BotCommand(command="help", description="❓ 查看使用帮助"),
 ]
 
