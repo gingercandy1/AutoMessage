@@ -27,7 +27,9 @@ class ContentItem(Base):
     favorites = relationship("UserFavorite", back_populates="project", cascade="all, delete-orphan")
 
     discovered_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    processed = Column(Integer, default=0)  # 0=未处理, 1=已处理
+    processed = Column(Integer, default=0)  # 0=未处理, 1=已处理, 2=失败, 3=待审(已发审查群组)
+    review_status = Column(String(20), nullable=True, default=None,
+                           comment="审查状态: NULL=未送审, pending=审查中, approved=通过, rejected=拒绝")
 
     metrics = Column(JSON)  # {"stars": 100, "downloads": 5000, "likes": 20, ...} 灵活存各平台指标
     raw_data = Column(JSON)  # 保留原始API返回,方便以后回溯/重新处理

@@ -1,5 +1,6 @@
 import asyncio
 
+from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from app.database import SessionLocal
 from app.database.models import Subscription
 from app.logger import AppLogger
 from app.services.publisher import DailyPublisher
+from app.services.review_service import ReviewService
 
 from app.collectors.github_collector import GitHubCollector, GitHubTrendingCollector
 from app.collectors.github_analyzer import GitHubAnalyzer
@@ -48,6 +50,20 @@ class JobScheduler:
             CronTrigger(hour=9, minute=0),
             id="daily_push",
             name="每日主动推送"
+        )
+        # 每天 10:00 把已摘要新闻送审查群组（Q4 审查闸门）
+        self.scheduler.add_job(
+            self.daily_review,
+            CronTrigger(hour=10, minute=0),
+            id="daily_review",
+            name="每日送审"
+        )
+        # Q9 每 6h 轻量快照：14:00 / 20:00 重新采集 GitHub + HF 指标（不触发 LLM）
+        self.scheduler.add_job(
+            self.lightweight_snapshot,
+            CronTrigger(hour="14,20", minute=0),
+            id="lightweight_snapshot",
+            name="轻量快照(6h)"
         )
 
         self.scheduler.start()
@@ -91,6 +107,33 @@ class JobScheduler:
                     logger.error(f"❌ 批处理失败 [{key}]: {e}")
         except Exception as e:
             logger.error(f"❌ 晚间处理调度失败: {e}")
+
+    async def daily_review(self):
+        """Q4 审查闸门：把 AI 已摘要(processed=1)的新闻送审查群组等待人工 ✅/❌。"""
+        logger.info("🔍 启动送审流程...")
+        try:
+            bot = Bot(token=settings.telegram_bot_token)
+            review = ReviewService()
+            sent = await review.send_for_review(bot)
+            logger.info(f"✅ 送审完成: {sent} 条")
+            await bot.session.close()
+        except Exception as e:
+            logger.error(f"❌ 送审失败: {e}")
+
+    async def lightweight_snapshot(self):
+        """Q9 轻量快照：每 6h 重新采集 GitHub + HF 指标并写入 MetricSnapshot（不触发 LLM）。"""
+        logger.info("📸 启动轻量快照（GitHub + HF）...")
+        targets = ["github", "huggingface"]
+        for source in targets:
+            collectors = self.collector_dict.get(source, [])
+            for collector in collectors:
+                for config in collector.configs():
+                    try:
+                        await collector.fetch(config)
+                    except Exception as e:
+                        logger.error(f"❌ 轻量快照失败 [{source}]: {e}")
+                    await asyncio.sleep(1)
+        logger.info("✅ 轻量快照完成")
 
     async def daily_push(self):
         """定时主动推送（ADR-0003 bot push）：推给所有已订阅用户/群组。"""

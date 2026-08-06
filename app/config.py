@@ -20,6 +20,14 @@ class Settings(BaseSettings):
         default=0,
         description="Telegram Channel ID"
     )
+    review_chat_id: int = Field(
+        default=0,
+        description="审查群组 Chat ID（AI 摘要先推到这里人工审查，Q4）"
+    )
+    public_channel_id: int = Field(
+        default=0,
+        description="公开频道 Chat ID（审查通过后才转发到这里，Q4）"
+    )
 
     # ============ Database ============
     database_url: str = Field(

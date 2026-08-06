@@ -151,6 +151,51 @@ class NewsService:
         finally:
             db.close()
 
+    def get_unreviewed_news(self, limit: int = 50) -> List[ContentItem]:
+        """待审查的新闻：AI 已摘要(processed=1) 且尚未送审(review_status IS NULL)。Q4。"""
+        db: Session = SessionLocal()
+        try:
+            return db.query(ContentItem) \
+                .options(joinedload(ContentItem.summary)) \
+                .filter(
+                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.processed == 1) &
+                    (ContentItem.review_status.is_(None))
+                ) \
+                .order_by(desc(ContentItem.discovered_at)) \
+                .limit(limit) \
+                .all()
+        finally:
+            db.close()
+
+    def get_approved_news(self, limit: int = 50) -> List[ContentItem]:
+        """已审查通过待发布的新闻（review_status='approved'）。Q4。"""
+        db: Session = SessionLocal()
+        try:
+            return db.query(ContentItem) \
+                .options(joinedload(ContentItem.summary)) \
+                .filter(
+                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.review_status == "approved")
+                ) \
+                .order_by(desc(ContentItem.discovered_at)) \
+                .limit(limit) \
+                .all()
+        finally:
+            db.close()
+
+    def set_review_status(self, item_id: int, status: str) -> bool:
+        db: Session = SessionLocal()
+        try:
+            item = db.query(ContentItem).filter(ContentItem.id == item_id).first()
+            if not item:
+                return False
+            item.review_status = status
+            db.commit()
+            return True
+        finally:
+            db.close()
+
     def get_by_id(self, item_id: int) -> Optional[ContentItem]:
         """按 ID 获取"""
         db: Session = SessionLocal()

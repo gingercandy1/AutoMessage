@@ -78,9 +78,35 @@ class DailyPublisher:
         )
         await asyncio.sleep(0.3)
 
-    async def publish_to_channel(self, channel_id: str):
-        # ADR-0001/0003: only reviewed news reaches the channel; wired in Phase 3 (review gate).
-        raise NotImplementedError("Channel publishing requires the review gate (Phase 3).")
+    async def publish_to_channel(self, channel_id: int | None = None):
+        """将已审查通过(approved)的新闻转发到公开频道（ADR-0001/0003 双通道）。
+
+        仅在人工审查通过后推送；未经审查或拒绝的绝不进频道。
+        channel_id 缺省读 settings.public_channel_id。
+        """
+        target = channel_id or settings.public_channel_id
+        if not target:
+            logger.warning("public_channel_id 未配置，跳过频道发布")
+            return 0
+        from app.services.review_service import _render_review_card
+        from app.services.news_service import NewsService
+        news = NewsService()
+        approved = news.get_approved_news(limit=50)
+        if not approved:
+            return 0
+        sent = 0
+        for item in approved:
+            try:
+                await self.bot.send_message(
+                    target, _render_review_card(item),
+                    parse_mode="HTML", disable_web_page_preview=False,
+                )
+                sent += 1
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                logger.error(f"频道发布失败 item={item.id}: {e}")
+        logger.info(f"📣 频道发布 {sent} 条已审查新闻")
+        return sent
 
     async def close(self):
         await self.bot.session.close()
