@@ -50,28 +50,35 @@ class JobScheduler:
         try:
             for source, collectors in self.collector_dict.items():
                 total = 0
-
                 for collector in collectors:
                     configs = collector.configs()
                     for config in configs:
-                        count = await collector.fetch(config)
-                        total += count
+                        # Per-(source, collector, config) isolation: one failure must
+                        # not abort the whole batch (ADR-0001 §7 failure isolation).
+                        try:
+                            count = await collector.fetch(config)
+                            total += count
+                        except Exception as e:
+                            logger.error(f"❌ 采集失败 [{source}]: {e}")
                         await asyncio.sleep(2)
                     logger.info(f"✅ {source}采集完成: {total} 个新项目")
         except Exception as e:
-            logger.error(f"❌ 采集失败: {e}")
+            logger.error(f"❌ 采集调度失败: {e}")
 
     async def daily_process(self):
         logger.info("🌙 启动晚间批处理流程...")
         try:
             for key, batch_processor in self.batch_processor_dict.items():
-                result = await batch_processor.process_batch(batch_size=2)
-                logger.info(
-                    f"✅ 晚间处理完成: "
-                    f"成功 {result['success']}, 失败 {result['failed']}"
-                )
+                try:
+                    result = await batch_processor.process_batch(batch_size=2)
+                    logger.info(
+                        f"✅ 晚间处理完成 [{key}]: "
+                        f"成功 {result['success']}, 失败 {result['failed']}"
+                    )
+                except Exception as e:
+                    logger.error(f"❌ 批处理失败 [{key}]: {e}")
         except Exception as e:
-            logger.error(f"❌ 晚间处理失败: {e}")
+            logger.error(f"❌ 晚间处理调度失败: {e}")
 
     async def start(self):
         await self.setup()

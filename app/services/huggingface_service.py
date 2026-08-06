@@ -217,7 +217,7 @@ class HuggingFaceService:
         db: Session = SessionLocal()
         try:
             fav_rows = (
-                db.query(UserFavorite.item_id)  # 修正：改為 item_id 參見下方 Model 修改
+                db.query(UserFavorite.project_id)  # ADR-0002: UserFavorite anchors ContentItem.id via project_id
                 .filter(UserFavorite.telegram_id == telegram_id)
                 .all()
             )
@@ -279,7 +279,7 @@ class HuggingFaceService:
             # 檢查是否已收藏（透過檢查該用戶是否收藏過這個 external_id 關聯的任何快照）
             existing = (
                 db.query(UserFavorite)
-                .join(ContentItem, UserFavorite.item_id == ContentItem.id)
+                .join(ContentItem, UserFavorite.project_id == ContentItem.id)
                 .filter(
                     UserFavorite.telegram_id == telegram_id,
                     ContentItem.source == self.NAME,
@@ -293,8 +293,8 @@ class HuggingFaceService:
                 db.commit()
                 return {"action": "removed"}
 
-            # 新增收藏，綁定當前最新的一條快照 ID
-            db.add(UserFavorite(telegram_id=telegram_id, item_id=latest_item.id))
+            # 新增收藏，綁定當前最新的一條 ContentItem.id (ADR-0002: project_id)
+            db.add(UserFavorite(telegram_id=telegram_id, project_id=latest_item.id))
             db.commit()
             return {"action": "added"}
         finally:

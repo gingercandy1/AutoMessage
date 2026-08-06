@@ -280,12 +280,14 @@ class GitHubCollector(BaseCollector):
                     captured_date=now.date(),
                     captured_at=now,
                 ).on_conflict_do_update(
-                    index_elements=["source", "external_id", "category", "captured_date"],
+                    # ADR-0002: one row per (source, external_id, captured_date)
+                    index_elements=["source", "external_id", "captured_date"],
                     set_={
                         "content_item_id": content_item.id,
+                        "category": item.get("language"),
                         "rank": None,
                         "metrics": metrics_data,
-                        "captured_at": now.date(),
+                        "captured_at": now,
                     }
                 )
                 db.execute(stmt)

@@ -193,7 +193,10 @@ class MetricSnapshot(Base):
 
     source = Column(String(50), nullable=False)
     external_id = Column(String(255), nullable=False)
-    category = Column(String(100), nullable=False, default="")
+    # NOTE (ADR-0002, 2026-08-06): `category` is intentionally KEPT as a column for
+    # per-entity classification (HF pipeline tag / GitHub language) but REMOVED from the
+    # daily uniqueness key. One row per entity per day; trend comparison is by external_id.
+    category = Column(String(100), nullable=True, default="")
 
     rank = Column(Integer, nullable=True)
     metrics = Column(JSONB, nullable=False)
@@ -202,7 +205,8 @@ class MetricSnapshot(Base):
     captured_at = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("source", "external_id", "category", "captured_date", name="uq_snapshot_daily"),
+        # Unified daily snapshot key: one row per (source, external_id, captured_date).
+        UniqueConstraint("source", "external_id", "captured_date", name="uq_snapshot_daily"),
         Index("idx_snapshot_lookup", "source", "external_id", "captured_at"),
         Index("idx_snapshot_category_lookup", "source", "category", "captured_at"),
     )

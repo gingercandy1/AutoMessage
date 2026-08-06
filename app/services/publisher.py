@@ -11,7 +11,7 @@ class DailyPublisher:
     def __init__(self):
         self.bot = Bot(token=settings.telegram_bot_token)
         self.github_service = GithubService()
-        self.summarizer = ProjectSummarizer(provider="openrouter")
+        self.summarizer = ProjectSummarizer(provider=settings.default_llm_provider)
 
     async def publish_to_user(self, telegram_id: int):
         projects = self.github_service.get_recent_hot()

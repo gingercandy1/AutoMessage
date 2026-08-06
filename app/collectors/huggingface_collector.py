@@ -135,7 +135,10 @@ class HuggingFaceCollector(BaseCollector):
                     captured_date=today,
                     captured_at=now,
                 ).on_conflict_do_update(
-                    index_elements=["source", "external_id", "category", "captured_date"],
+                    # ADR-0002: one row per (source, external_id, captured_date).
+                    # A model may appear under multiple HF pipeline tags, but we keep a
+                    # single daily row per model (classification fixed to the first seen).
+                    index_elements=["source", "external_id", "captured_date"],
                     set_={
                         "content_item_id": content_item.id,
                         "rank": r["rank"],
