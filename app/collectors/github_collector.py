@@ -369,11 +369,12 @@ class GitHubTrendingCollector(BaseCollector):
             })
         return headers
 
-    async def fetch(self, config: GithubConfig = None, since: str = "daily"):
+    async def fetch(self, config: GithubConfig = None, since: str = "daily") -> int:
         """
         抓取一次 Trending 列表
         :param config:
         :param since: "daily" / "weekly" / "monthly"
+        :return: 本次入库/更新的项目数量（int），供调度器累加统计
         """
         url = self.BASE_URL
         if config.language:
@@ -386,13 +387,14 @@ class GitHubTrendingCollector(BaseCollector):
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(url, params=params, headers=headers)
                 response.raise_for_status()
-        except httpx.HTTPError as e:
+        except Exception as e:
+            # 抓取失败不应中断调度器：记录并以 0 计入统计
             logger.error(f"❌ 请求 GitHub Trending 失败: {e}")
-            return []
+            return 0
 
         projects = await self._parse(response.text)
-        await self.save(projects)
-        return None
+        added = await self.save(projects)
+        return added
 
     async def _parse(self, html: str) -> list[ContentItem]:
         soup = BeautifulSoup(html, "html.parser")
@@ -534,4 +536,17 @@ class GitHubTrendingCollector(BaseCollector):
 
 
     def configs(self):
-        return []
+        # Trending 需要非空配置，否则调度循环 for config in []: 会跳过本采集器（死代码）。
+        # 涵盖『全部语言』(language=None) 与各语言，复用 GitHubCollector 的语言集以统一趋势口径。
+        languages = [None, "python", "javascript", "c++", "go", "rust",
+                     "java", "c#", "php", "swift", "kotlin"]
+        return [
+            GithubConfig(
+                language=lang,
+                sort_by="stars",
+                growth_window_days=1,
+                min_stars=0,
+                max_results=50,
+            )
+            for lang in languages
+        ]
