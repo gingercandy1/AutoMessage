@@ -56,6 +56,9 @@ docker compose exec -T postgres psql -U dev -d ai_projects < backup.sql
 docker compose exec bot python -c "import urllib.request; print(urllib.request.urlopen('http://host.docker.internal:11434').read())"
 
 
+-- 删除
+docker compose exec postgres psql -U dev -d ai_projects -c "TRUNCATE content_items, summaries, metric_snapshots, news_clusters, pipeline_runs, user_favorites, subscriptions, users RESTART IDENTITY CASCADE;"                                              
+
 -- 加字段
 ALTER TABLE projects ADD COLUMN status VARCHAR(20) DEFAULT 'pending';
 

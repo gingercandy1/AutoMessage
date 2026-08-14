@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
-import re
+from rapidfuzz import fuzz
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Set
 
+import httpx
+import trafilatura
 from sqlalchemy.dialects.postgresql import insert
 
 from app.api.hackernews_client import HackerNewsClient
@@ -215,29 +217,12 @@ class NewsCollector(BaseCollector):
         logger.info(f"✅ RSS: {len(normalized)} 条")
         return normalized[:config.max_items]
 
-    def _levenshtein_ratio(self, a: str, b: str) -> float:
-        """归一化 Levenshtein 相似度 [0,1]（1=完全相同）。ADR-0001 Q10 v1 方案。"""
-        a = (a or "").strip().lower()
-        b = (b or "").strip().lower()
-        if not a and not b:
-            return 1.0
+    def _levenshtein_ratio(self, a, b):
         if not a or not b:
             return 0.0
-        # 快速短路
         if a == b:
             return 1.0
-        la, lb = len(a), len(b)
-        if abs(la - lb) / max(la, lb) > 0.5:
-            return 0.0
-        prev = list(range(lb + 1))
-        for i, ca in enumerate(a, 1):
-            cur = [i]
-            for j, cb in enumerate(b, 1):
-                cost = 0 if ca == cb else 1
-                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost))
-            prev = cur
-        dist = prev[lb]
-        return 1.0 - dist / max(la, lb)
+        return fuzz.ratio(a, b, score_cutoff=85.0) / 100.0
 
     def _normalize_url(self, url: str) -> str:
         """归一化 URL：去 scheme、尾部斜杠、www.、查询参数排序，用于精确去重。"""
@@ -300,7 +285,12 @@ class NewsCollector(BaseCollector):
         return unique
 
     def _write_clusters(self, item_id_by_index: Dict[int, int]):
-        """将本次批次内的簇写入 NewsCluster 表（canonical=簇首）。"""
+        """将本次批次内的簇写入 NewsCluster 表（canonical=簇首）。
+
+        跨运行去重（Q10 v1）：若某个成员已属于既有 NewsCluster，则把本次新成员
+        并入既有簇（以既有 canonical 为准），不再新建重复 canonical，避免同一
+        新闻在多次采集后产生多个簇、进而导致频道重复推送。
+        """
         if not getattr(self, "_last_clusters", None):
             return
         db = SessionLocal()
@@ -308,6 +298,17 @@ class NewsCollector(BaseCollector):
             for grp in self._last_clusters:
                 member_ids = [item_id_by_index[i] for i in grp if i in item_id_by_index]
                 if len(member_ids) < 2:
+                    continue
+                # 既有簇查找：任一成员已出现在某个 NewsCluster 里
+                existing = (
+                    db.query(NewsCluster)
+                    .filter(NewsCluster.member_item_ids.op("&&")(member_ids))
+                    .first()
+                )
+                if existing:
+                    merged = list(set((existing.member_item_ids or []) + member_ids))
+                    existing.member_item_ids = merged
+                    db.add(existing)
                     continue
                 db.add(NewsCluster(
                     canonical_item_id=member_ids[0],
@@ -317,6 +318,58 @@ class NewsCollector(BaseCollector):
             db.commit()
         finally:
             db.close()
+
+    async def _fetch_full_text(self, url: str) -> str:
+        """抓取并提取文章正文（Q3：采集时缓存全文，避免摘要时再联网漂移）。
+
+        失败返回空串，绝不抛出——采集流程不能因单篇正文抓取失败而中断。
+        """
+        try:
+            async with httpx.AsyncClient(
+                timeout=20.0, follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            ) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+            extracted = trafilatura.extract(
+                resp.text, include_comments=False, include_tables=False, no_fallback=False
+            )
+            if extracted and len(extracted) > 200:
+                return extracted[:8000]
+            return ""
+        except Exception as e:
+            logger.warning(f"新闻正文抓取失败 {url}: {e}")
+            return ""
+
+    async def _enrich_full_text(self, items: List[Dict[str, Any]]) -> None:
+        """采集时为每条新闻缓存全文到 raw_data['full_text']（Q3）。
+
+        RSS 条目若已有 content 则直接复用，不再联网；其余带 URL 的尝试抓取，
+        限制并发避免打爆源站。原地修改 items 的 raw_data。
+        """
+        sem = asyncio.Semaphore(5)
+
+        async def _enrich_one(item: Dict[str, Any]) -> None:
+            raw = item.get("raw_data") or {}
+            if isinstance(raw, dict) and raw.get("full_text"):
+                return
+            # RSS 已有正文，直接复用
+            if isinstance(raw, dict) and raw.get("content"):
+                raw["full_text"] = raw["content"][:8000]
+                item["raw_data"] = raw
+                return
+            url = item.get("url")
+            if not url:
+                return
+            async with sem:
+                text = await self._fetch_full_text(url)
+            if text:
+                if not isinstance(raw, dict):
+                    raw = {}
+                raw["full_text"] = text
+                item["raw_data"] = raw
+
+        await asyncio.gather(*[_enrich_one(it) for it in items])
 
     async def fetch(self, config: NewsConfig) -> list[dict[str, Any]]:
         """抓取新闻"""
@@ -328,6 +381,9 @@ class NewsCollector(BaseCollector):
 
         # 限制数量
         all_items = all_items[:config.max_items]
+
+        # Q3: 采集时缓存全文到 raw_data['full_text']，供摘要阶段只读缓存
+        await self._enrich_full_text(all_items)
 
         await self.save(all_items)
         return all_items

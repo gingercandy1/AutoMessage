@@ -1,0 +1,23 @@
+# 构建上下文忽略：密钥与本地环境不进镜像
+.env
+.env.local
+.env.*
+!.env.example
+
+# Python 缓存 / 虚拟环境
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 测试与本地工具
+.pytest_cache/
+tests/
+.scratch/
+*.md
+
+# 编辑/系统
+.git/
+.gitignore
+.idea/
+.vscode/

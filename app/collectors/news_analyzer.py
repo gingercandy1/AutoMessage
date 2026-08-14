@@ -125,14 +125,21 @@ class NewsAnalyzer(BaseAnalyzer):
             return self._build_fallback_prompt(url, content)
 
         context_sections = self._build_context_sections(db_item)
-        
-        # 获取文章全文
-        full_content = await self._fetch_article_content(url)
+
+        # 获取文章全文：Q3 优先读采集时缓存的 raw_data['full_text']，
+        # 仅在缓存缺失时才回退到联网抓取（避免漂移 / 减少网络依赖）。
+        cached = ""
+        if isinstance(db_item.raw_data, dict):
+            cached = db_item.raw_data.get("full_text") or ""
+        if cached:
+            full_content = cached
+        else:
+            full_content = await self._fetch_article_content(url)
         if not full_content and db_item.description:
             full_content = db_item.description
         elif not full_content:
             full_content = db_item.raw_data.get("content", "") if db_item.raw_data else ""
-        
+
         # 清理内容
         cleaned_content = self.cleaner.clean_readme(full_content, max_length=6000)
 

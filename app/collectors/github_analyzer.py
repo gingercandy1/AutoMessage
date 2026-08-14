@@ -122,10 +122,13 @@ class GitHubAnalyzer(BaseAnalyzer):
                 self._get_commits_activity(owner, repo),
                 self._get_issues_summary(owner, repo),
                 self._get_dependencies(owner, repo),
+                self._get_topics(owner, repo),
+                self._get_contributors(owner, repo),
+                self._get_languages(owner, repo),
             ]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            readme, commits_data, issues, deps = results
+            readme, commits_data, issues, deps, topics, contributors, languages = results
 
             # 清理 README
             cleaned_readme = self.cleaner.clean_readme(readme) if not isinstance(readme, Exception) else ""
@@ -139,7 +142,10 @@ class GitHubAnalyzer(BaseAnalyzer):
                 "readme": cleaned_readme,
                 "commits_activity": commits_data if not isinstance(commits_data, Exception) else {},
                 "issues": issues if not isinstance(issues, Exception) else {},
-                "dependencies": deps if not isinstance(deps, Exception) else {}
+                "dependencies": deps if not isinstance(deps, Exception) else {},
+                "topics": topics if not isinstance(topics, Exception) else [],
+                "contributors": contributors if not isinstance(contributors, Exception) else [],
+                "languages": languages if not isinstance(languages, Exception) else {},
             }
             logger.info(f"✅ 完成数据采集: {owner}/{repo}")
             return analysis
@@ -147,7 +153,7 @@ class GitHubAnalyzer(BaseAnalyzer):
             logger.error(f"❌ 分析失败: {str(e)}")
             raise
 
-    def _build_context_sections(self, repo_info: ContentItem, commits_activity: Dict,  issues: Dict, dependencies: Dict) -> Dict[str, str]:
+    def _build_context_sections(self, repo_info: ContentItem, commits_activity: Dict,  issues: Dict, dependencies: Dict, topics: List[str] = None, contributors: List[Dict] = None, languages: Dict[str, int] = None) -> Dict[str, str]:
         # 基本信息
         basic_info = (
             f"Star数: {repo_info.metrics["stars"]} | "
@@ -183,12 +189,59 @@ class GitHubAnalyzer(BaseAnalyzer):
             f"依赖总数: {dependencies.get('total_dependencies', 0)}"
         )
 
+        # Topics / 贡献者 / 语言占比（#06 分析质量）
+        topics_text = "、".join(topics) if topics else "无"
+        top_contributors = sorted(
+            contributors, key=lambda c: c.get("contributions", 0), reverse=True
+        )[:5]
+        contributors_text = (
+            "、".join(
+                f"{c.get('login', '?')}({c.get('contributions', 0)})"
+                for c in top_contributors
+            )
+            if top_contributors else "无"
+        )
+        total_bytes = sum(languages.values()) if languages else 0
+        top_langs = sorted(languages.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        languages_text = (
+            "、".join(
+                f"{name} {int(pct * 100)}%" for name, pct in (
+                    (n, b / total_bytes) for n, b in top_langs
+                )
+            )
+            if total_bytes else "无"
+        )
+
         return {
             "basic_info": basic_info,
             "activity": activity,
             "issues": issues_text,
             "dependencies": dependencies_text,
+            "topics": topics_text,
+            "contributors": contributors_text,
+            "languages": languages_text,
         }
+
+    async def _get_topics(self, owner: str, repo: str) -> List[str]:
+        try:
+            return await self.client.get_topics(owner, repo)
+        except Exception as e:
+            logger.warning(f"获取 topics 失败: {e}")
+            return []
+
+    async def _get_contributors(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        try:
+            return await self.client.get_contributors(owner, repo, per_page=10)
+        except Exception as e:
+            logger.warning(f"获取 contributors 失败: {e}")
+            return []
+
+    async def _get_languages(self, owner: str, repo: str) -> Dict[str, int]:
+        try:
+            return await self.client.get_languages(owner, repo)
+        except Exception as e:
+            logger.warning(f"获取 languages 失败: {e}")
+            return {}
 
     async def build_context(self, repo_url: str):
         analysis = await self._analyze_repository(repo_url)
@@ -200,10 +253,19 @@ class GitHubAnalyzer(BaseAnalyzer):
         commits_activity = analysis.get("commits_activity", {})
         issues = analysis.get("issues", {})
         dependencies = analysis.get("dependencies", {})
+        topics = analysis.get("topics", [])
+        contributors = analysis.get("contributors", [])
+        languages = analysis.get("languages", {})
 
         context_sections = self._build_context_sections(
-            repo_info, commits_activity, issues, dependencies
+            repo_info, commits_activity, issues, dependencies,
+            topics=topics, contributors=contributors, languages=languages,
         )
+
+        # #06 渐进式 README：保留核心内容，标注已截断，避免一次性塞满上下文
+        readme_note = ""
+        if len(readme) > 6000:
+            readme_note = "\n（README 已截断至前 6000 字符，关键结论请基于下方结构化指标推断）\n"
 
         prompt = f"""
                 你是一位专业的 GitHub 项目分析师，请综合下面提供的多维度数据，仔细分析这个项目，并用**纯 JSON** 格式返回结果，不要包含任何其他文字和 markdown 代码块。
@@ -223,22 +285,36 @@ class GitHubAnalyzer(BaseAnalyzer):
                 ## 依赖情况
                 {context_sections['dependencies']}
 
+                ## 主题标签 (Topics)
+                {context_sections['topics']}
+
+                ## 核心贡献者（按贡献数）
+                {context_sections['contributors']}
+
+                ## 语言占比
+                {context_sections['languages']}
+
                 ## README 内容
-                {readme_text}
+                {readme_text}{readme_note}
+
+                **【证据合成硬约束】** 你必须基于上方真实数据（Star/Fork 数、commit 频率、issue 响应、contributors、语言占比、README 原文）交叉验证后给出结论：
+                - summary / pros / cons 中每一条判断都要能对应到上方某个**具体数字或事实**（如「近30天 {commits_activity.get('commits_30_days', 0)} 次提交」、「{context_sections['contributors']} 等贡献者」）。
+                - 不得臆测 README 之外未给出的能力；宁可保守，不可编造。
+                - 若某项数据缺失，明确说明「数据不足」，不要假装有。
 
                 请结合以上**全部信息**（不要只看README），综合评估项目的活跃度、社区健康度、技术成熟度，返回以下 JSON 结构（必须是有效的 JSON，不要包含任何其他内容）：
                 {{
                   "one_liner": "一句话介绍（15-25字）",
-                  "summary": "项目详细介绍（80-150字，需结合活跃度/社区情况等综合判断，不要只复述README）",
+                  "summary": "项目详细介绍（80-150字，需结合活跃度/社区情况等综合判断，并引用具体数据，不要只复述README）",
                   "use_cases": "主要适用场景，用逗号分隔",
-                  "pros": ["优点1", "优点2", "优点3"],
-                  "cons": ["缺点1", "缺点2"],
+                  "pros": ["优点1（附数据依据）", "优点2（附数据依据）", "优点3"],
+                  "cons": ["缺点1（附数据依据）", "缺点2"],
                   "score": 0,
                   "tags": ["tag1", "tag2", "tag3"],
                   "install_step": "简要安装/使用步骤"
                   "maturity_level": "成熟度评估（早期项目 / 稳定可用 / 成熟可靠 / 生产级）"
                 }}
-                
+
                 **评分标准（score 满分10分）**：
                 - 9.0+：社区活跃、更新频繁、实际使用价值高
                 - 7.5-8.9：有潜力但可能存在明显不足

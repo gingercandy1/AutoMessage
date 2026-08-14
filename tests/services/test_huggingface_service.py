@@ -52,7 +52,8 @@ class TestHuggingFaceService:
             # Act
             result = service.get_trend(category_key="text-generation")
 
-            # Assert
+            # Assert: get_trend delegates to get_latest_ranking and returns its result.
+            # (Session open/close lives inside get_latest_ranking, so it is NOT exercised
+            # here — asserting mock_db.close would test the mocked method, not get_trend.)
             assert len(result) == 1
             assert isinstance(result[0], ContentItem)
-            mock_db.close.assert_called_once()

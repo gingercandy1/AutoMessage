@@ -102,6 +102,38 @@ class GitHubClient:
         resp = await self._request("GET", "/rate_limit")
         return resp.json()["resources"]["core"]
 
+    async def get_topics(self, owner: str, repo: str) -> List[str]:
+        """仓库主题标签（Topics）—— 需在请求头声明应用/vnd.github.mercy-preview+json。"""
+        resp = await self._request(
+            "GET", f"/repos/{owner}/{repo}/topics",
+            headers={"Accept": "application/vnd.github.mercy-preview+json"},
+            allow_404=True,
+        )
+        if not resp:
+            return []
+        data = resp.json()
+        return data.get("names", []) if isinstance(data, dict) else []
+
+    async def get_contributors(self, owner: str, repo: str, per_page: int = 10) -> List[Dict[str, Any]]:
+        """贡献者列表（含贡献数），用于社区健康度评估。"""
+        resp = await self._request(
+            "GET", f"/repos/{owner}/{repo}/contributors",
+            params={"per_page": per_page}, allow_404=True,
+        )
+        if not resp:
+            return []
+        return resp.json() if isinstance(resp.json(), list) else []
+
+    async def get_languages(self, owner: str, repo: str) -> Dict[str, int]:
+        """语言占比（字节数），用于判断技术栈构成。"""
+        resp = await self._request(
+            "GET", f"/repos/{owner}/{repo}/languages", allow_404=True
+        )
+        if not resp:
+            return {}
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
     async def list_commits(
             self,
             owner: str,

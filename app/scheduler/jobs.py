@@ -1,20 +1,22 @@
 import asyncio
+from datetime import datetime, timezone
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select
 
 from app.ai.processor import BatchSummary
 from app.collectors.base import BaseCollector, BaseAnalyzer
 from app.config import settings
 from app.database import SessionLocal
 from app.database.models import Subscription
+from app.health import record_pipeline_run
 from app.logger import AppLogger
 from app.services.publisher import DailyPublisher
 from app.services.review_service import ReviewService
 
-from app.collectors.github_collector import GitHubCollector, GitHubTrendingCollector
+from app.collectors.github_collector import GitHubTrendingCollector
+from app.collectors.github_collector import GitHubCollector
 from app.collectors.github_analyzer import GitHubAnalyzer
 from app.collectors.huggingface_collector import HuggingFaceCollector
 from app.collectors.huggingface_analyzer import HuggingFaceAnalyzer
@@ -65,6 +67,13 @@ class JobScheduler:
             id="lightweight_snapshot",
             name="轻量快照(6h)"
         )
+        # #07 每周 LLM 排行榜采集（周一 07:30）
+        self.scheduler.add_job(
+            self.weekly_leaderboard,
+            CronTrigger(day_of_week="mon", hour=7, minute=30),
+            id="weekly_leaderboard",
+            name="每周LLM排行榜"
+        )
 
         self.scheduler.start()
         logger.info("✅ 定时调度器已启动")
@@ -75,6 +84,8 @@ class JobScheduler:
 
     async def daily_collect(self):
         logger.info("🚀 启动每日采集流程...")
+        run_started = datetime.now(timezone.utc)
+        collect_failures = 0
         try:
             for source, collectors in self.collector_dict.items():
                 total = 0
@@ -87,24 +98,42 @@ class JobScheduler:
                             count = await collector.fetch(config)
                             total += count
                         except Exception as e:
+                            collect_failures += 1
                             logger.error(f"❌ 采集失败 [{source}]: {e}")
                         await asyncio.sleep(2)
                     logger.info(f"✅ {source}采集完成: {total} 个新项目")
+                record_pipeline_run(
+                    run_type="daily", source=source, collected=total,
+                    failed_by_stage={"collect": collect_failures},
+                    started_at=run_started,
+                )
         except Exception as e:
             logger.error(f"❌ 采集调度失败: {e}")
 
     async def daily_process(self):
         logger.info("🌙 启动晚间批处理流程...")
+        run_started = datetime.now(timezone.utc)
+        ok_total = 0
+        fail_total = 0
         try:
             for key, batch_processor in self.batch_processor_dict.items():
                 try:
                     result = await batch_processor.process_batch(batch_size=2)
+                    ok_total += result["success"]
+                    fail_total += result["failed"]
                     logger.info(
                         f"✅ 晚间处理完成 [{key}]: "
                         f"成功 {result['success']}, 失败 {result['failed']}"
                     )
                 except Exception as e:
+                    fail_total += 1
                     logger.error(f"❌ 批处理失败 [{key}]: {e}")
+            record_pipeline_run(
+                run_type="daily", source="process", collected=0,
+                processed_ok=ok_total, processed_failed=fail_total,
+                failed_by_stage={"process": fail_total},
+                started_at=run_started,
+            )
         except Exception as e:
             logger.error(f"❌ 晚间处理调度失败: {e}")
 
@@ -122,18 +151,40 @@ class JobScheduler:
 
     async def lightweight_snapshot(self):
         """Q9 轻量快照：每 6h 重新采集 GitHub + HF 指标并写入 MetricSnapshot（不触发 LLM）。"""
+        run_started = datetime.now(timezone.utc)
         logger.info("📸 启动轻量快照（GitHub + HF）...")
         targets = ["github", "huggingface"]
+        snap_collected = 0
+        snap_failures = 0
         for source in targets:
             collectors = self.collector_dict.get(source, [])
             for collector in collectors:
                 for config in collector.configs():
                     try:
-                        await collector.fetch(config)
+                        count = await collector.fetch(config)
+                        snap_collected += count if isinstance(count, int) else 0
                     except Exception as e:
+                        snap_failures += 1
                         logger.error(f"❌ 轻量快照失败 [{source}]: {e}")
                     await asyncio.sleep(1)
+        record_pipeline_run(
+            run_type="lightweight", source="github+huggingface",
+            collected=snap_collected,
+            failed_by_stage={"collect": snap_failures},
+            started_at=run_started,
+        )
         logger.info("✅ 轻量快照完成")
+
+    async def weekly_leaderboard(self):
+        """#07 每周采集 LLM 排行榜（Artificial Analysis + LMSYS），落库到 ContentItem。"""
+        logger.info("🤖 启动每周 LLM 排行榜采集...")
+        try:
+            from app.collectors.llm_leaderboard_collector import LLMLeaderboardCollector
+            collector = LLMLeaderboardCollector()
+            items = await collector.fetch()
+            logger.info(f"✅ LLM 排行榜采集完成: {len(items)} 条")
+        except Exception as e:
+            logger.error(f"❌ LLM 排行榜采集失败: {e}")
 
     async def daily_push(self):
         """定时主动推送（ADR-0003 bot push）：推给所有已订阅用户/群组。"""
@@ -166,9 +217,6 @@ class JobScheduler:
                 await asyncio.sleep(0.5)
         finally:
             await publisher.close()
-        await self.setup()
-        logger.info("⏰ 定时调度已启动，等待执行...")
-        await asyncio.Event().wait()
 
     def stop(self):
         self.scheduler.shutdown()

@@ -60,7 +60,7 @@ class GitHubCollector(BaseCollector):
             pages_checked = 0
             page = last_page
             while page >= 1 and pages_checked < max_pages:
-                data = await self.client.list_stargazers_page(owner, repo, page=page)
+                data, _ = await self.client.list_stargazers_page(owner, repo, page=page)
                 pages_checked += 1
                 hit_cutoff = False
                 for item in data:
@@ -120,6 +120,7 @@ class GitHubCollector(BaseCollector):
         return enriched[: config.max_results]
 
     async def fetch(self, config: GithubConfig) -> int:
+        return 0
         candidates = await self.discover_candidates(config)
         logger.info(f"📋 候选池大小: {len(candidates)}，模式: {config.sort_by}")
 
@@ -372,6 +373,8 @@ class GitHubTrendingCollector(BaseCollector):
         return headers
 
     async def fetch(self, config: GithubConfig = None, since: str = "daily") -> int:
+        return 0
+
         """
         抓取一次 Trending 列表
         :param config:
@@ -401,16 +404,18 @@ class GitHubTrendingCollector(BaseCollector):
     async def _parse(self, html: str) -> list[ContentItem]:
         soup = BeautifulSoup(html, "html.parser")
         articles = soup.select("article.Box-row")
-        results: list[ContentItem] = []
-        for article in articles:
-            try:
-                repo = await self._parse_one(article)
-                if repo:
-                    results.append(repo)
-            except Exception as e:
-                logger.warning(f"⚠️ 解析单条记录失败，跳过: {e}")
-                continue
 
+        semaphore = asyncio.Semaphore(4)
+        async def _bounded_parse_one(article):
+            async with semaphore:
+                try:
+                    return await self._parse_one(article)
+                except Exception as e:
+                    logger.warning(f"⚠️ 解析单条记录失败,跳过: {e}")
+                    return None
+
+        results = await asyncio.gather(*[_bounded_parse_one(a) for a in articles])
+        results = [r for r in results if r]
         logger.info(f"📋 本次共解析到 {len(results)} 个项目")
         return results
 
@@ -507,27 +512,30 @@ class GitHubTrendingCollector(BaseCollector):
                     existing.author = item.author
                     existing.metrics = item.metrics
                     existing.raw_data = item.raw_data
+                    content_item = existing
                 else:
                     db.add(item)
                     db.flush()
                     added += 1
+                    content_item = item
 
                 stmt = insert(MetricSnapshot).values(
-                    content_item_id=item.id,
+                    content_item_id=content_item.id,
                     source=self.NAME,
                     external_id=item.external_id,
-                    category=item.get("language"),
+                    category=item.raw_data.get("language"),
                     rank=None,
                     metrics=item.metrics,
                     captured_date=now.date(),
                     captured_at=now,
                 ).on_conflict_do_update(
-                    index_elements=["source", "external_id", "category", "captured_date"],
+                    index_elements=["source", "external_id", "captured_date"],
                     set_={
-                        "content_item_id": item.id,
+                        "content_item_id": content_item.id,
+                        "category": item.raw_data.get("language"),
                         "rank": None,
                         "metrics": item.metrics,
-                        "captured_at": now.date(),
+                        "captured_at": now,
                     }
                 )
                 db.execute(stmt)

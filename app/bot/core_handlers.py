@@ -44,6 +44,8 @@ BOT_COMMANDS = [
     BotCommand(command="subscribe", description="🔔 订阅每日推送"),
     BotCommand(command="unsubscribe", description="🔕 取消每日推送"),
     BotCommand(command="help", description="❓ 查看使用帮助"),
+    BotCommand(command="status", description="📊 查看采集管线健康状态"),
+    BotCommand(command="llm_start", description="🤖 查看 LLM 排行榜"),
 ]
 
 
@@ -81,7 +83,7 @@ def _extract_page(callback_data: str) -> int:
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     welcome_text = (
-        "<b>🚀 AI 项目探索 Bot</b>\n"
+        "🚀 <b>AI 项目探索 Bot</b>\n"
         "在这里发现最有潜力的开源项目\n"
         "每天为你推荐优质、trending 的 GitHub 项目\n"
         "以及有潜力的 HuggingFace AI 模型\n"
@@ -129,6 +131,31 @@ async def back_menu(query: CallbackQuery):
         parse_mode="HTML",
         reply_markup=MainKeyboards.main_menu(),
     )
+
+
+@router.message(Command("status"))
+async def cmd_status(message: Message):
+    """📊 Q7 管线健康状态：各源成功率 + 条目数 + 最近快照时间。"""
+    from app.health import get_pipeline_health
+
+    h = get_pipeline_health()
+    if h.get("error"):
+        await message.answer(f"⚠️ 健康查询失败：{h['error']}")
+        return
+
+    lines = [
+        f"📊 <b>采集管线状态</b> · {h['generated_at']}",
+        f"总体成功率：<b>{h['overall_success_rate_pct']}%</b> · 条目总数：{h['total_items']}",
+        "",
+    ]
+    for source, s in sorted(h.get("per_source", {}).items()):
+        last = s.get("last_snapshot_at") or "—"
+        lines.append(
+            f"• <b>{source}</b>：{s['total']} 条 "
+            f"(✅{s['ok']} ❌{s['error']} ⏳{s['unprocessed']}) "
+            f"快照 {last}"
+        )
+    await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @router.message(Command("help"))

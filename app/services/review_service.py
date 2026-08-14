@@ -1,19 +1,6 @@
-"""Q4 人工审查闸门（ADR-0001 §8）。
-
-流程：
-  1. scheduler 触发 send_for_review()：把 AI 已摘要(processed=1)、未送审(review_status IS NULL)
-     的新闻推到 settings.review_chat_id，每条附 ✅/❌ inline 按钮。
-  2. 管理员在审查群组点 ✅ → 转发到公开频道 settings.public_channel_id，标记 approved；
-     点 ❌ → 标记 rejected，编辑原消息注明已拒绝。
-
-review_status 字段：NULL=未送审, pending=审查中, approved=通过, rejected=拒绝。
-"""
-from __future__ import annotations
-
 import asyncio
 import json
 from html import escape
-from typing import List
 
 from aiogram import Bot
 from aiogram.types import (
@@ -21,7 +8,6 @@ from aiogram.types import (
 )
 
 from app.config import settings
-from app.database import SessionLocal
 from app.database.models import ContentItem
 from app.logger import AppLogger
 from app.services.news_service import NewsService
@@ -57,18 +43,39 @@ def _render_review_card(item: ContentItem) -> str:
             if len(body) > 400:
                 body = body[:400] + "…"
             lines.append(body)
-        # 原文摘录（Q3 准确性核对）
+    # 原文摘录（Q3 准确性核对）
         quotes = getattr(s, "source_quotes", None)
-        if quotes:
-            if isinstance(quotes, str):
-                try:
-                    quotes = json.loads(quotes)
-                except (json.JSONDecodeError, TypeError):
-                    quotes = []
-            if isinstance(quotes, list):
-                for q in quotes[:2]:
-                    lines.append(f"❝ {escape(str(q).strip())}")
+        quote_list = _coerce_quotes(quotes)
+        if quote_list:
+            for q in quote_list[:2]:
+                lines.append(f"❝ {escape(str(q).strip())}")
+        # Q3 闸门：摘要必须有原文摘录支撑，否则向审查员标红
+        if not _quote_coverage_ok(str(s.summary or ""), quote_list):
+            lines.append("⚠️ <b>准确性待核</b>：摘要无原文摘录支撑，请谨慎通过")
     return "\n".join(lines)
+
+
+def _coerce_quotes(quotes) -> list:
+    """source_quotes 可能是 list / JSON 字符串 / None，统一成 list[str]。"""
+    if not quotes:
+        return []
+    if isinstance(quotes, str):
+        try:
+            quotes = json.loads(quotes)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return quotes if isinstance(quotes, list) else []
+
+
+def _quote_coverage_ok(summary_text: str, quotes: list) -> bool:
+    """Q3 硬约束的轻量校验：有摘录且摘要里至少有一句能被某条摘录覆盖。
+
+    简化判定：存在非空摘录即视为有支撑；若摘录为空则视为不支持。
+    完整判定依赖人工审查，这里只做「有无摘录」的闸门提示。
+    """
+    if not summary_text or not summary_text.strip():
+        return True
+    return bool([q for q in quotes if isinstance(q, str) and q.strip()])
 
 
 class ReviewService:

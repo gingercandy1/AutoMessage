@@ -1,9 +1,9 @@
 import json
-from datetime import datetime, UTC, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (Column, Integer, String, Text, DateTime, Float,
-                        ForeignKey, UniqueConstraint, JSON, Index, BigInteger, Date)
+                        ForeignKey, UniqueConstraint, JSON, Index, BigInteger, Date, CheckConstraint)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -16,9 +16,10 @@ class ContentItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     source = Column(String)  # GitHub, x, hacker_news, news
-    external_id = Column(String(255), nullable=False)  # 代替repository，各平台原始ID,配合source联合唯一
+    external_id = Column(String(255), nullable=False)
     title = Column(String, index=True)
-    url = Column(String, unique=True)
+
+    url = Column(String, unique=True, nullable=True)
     description = Column(String)
     author = Column(String)
     category = Column(String(50), nullable=True, index=True)  # 新闻分类: ai, llm, research, tools, industry
@@ -31,7 +32,7 @@ class ContentItem(Base):
     review_status = Column(String(20), nullable=True, default=None,
                            comment="审查状态: NULL=未送审, pending=审查中, approved=通过, rejected=拒绝")
 
-    metrics = Column(JSON)  # {"stars": 100, "downloads": 5000, "likes": 20, ...} 灵活存各平台指标
+    metrics = Column(JSONB)  # 灵活存各平台指标，未来可按语言/分类做 GIN 索引过滤
     raw_data = Column(JSON)  # 保留原始API返回,方便以后回溯/重新处理
 
     __table_args__ = (
@@ -53,14 +54,12 @@ class User(Base):
     last_name = Column(String(255), nullable=True, comment="姓氏")
 
     subscription_tier = Column(String(50), nullable=False, default="free", comment="订阅等级（free/pro/premium）")
-    api_quota = Column(Integer, nullable=False, default=100, comment="API 调用配额")
-    api_used = Column(Integer, nullable=False, default=0, comment="已使用 API 调用")
 
     preferred_languages = Column(JSON, nullable=True, comment="偏好语言列表")
     preferred_tags = Column(JSON, nullable=True, comment="偏好标签列表")
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(UTC), comment="注册时间")
-    last_active = Column(DateTime, nullable=False, default=datetime.now(UTC), comment="最后活跃时间")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), comment="注册时间")
+    last_active = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), comment="最后活跃时间")
 
     __table_args__ = (
         Index("idx_telegram_id", "telegram_id"),
@@ -81,7 +80,7 @@ class UserFavorite(Base):
     telegram_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     project_id = Column(Integer, ForeignKey("content_items.id", ondelete="CASCADE"), nullable=False)
 
-    created_at = Column(DateTime, nullable=False, default=datetime.now(UTC), comment="收藏时间")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), comment="收藏时间")
     project = relationship("ContentItem", back_populates="favorites")
 
     __table_args__ = (
@@ -101,14 +100,19 @@ class Subscription(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(BigInteger, nullable=False, comment="Telegram ID")
 
-    subscription_type = Column(String(100), nullable=False, comment="订阅类型（language/tag/author）")
+    subscription_type = Column(String(100), nullable=False, comment="订阅维度（language/tag/author/source）")
     subscription_value = Column(String(255), nullable=False, comment="订阅值（python/AI/xxx）")
 
     is_active = Column(Integer, nullable=False, default=1, comment="是否活跃")
-    created_at = Column(DateTime, nullable=False, default=datetime.now(UTC), comment="订阅时间")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), comment="订阅时间")
 
     __table_args__ = (
         Index("idx_telegram_subscription", "telegram_id", "subscription_type", "subscription_value"),
+        # 维度白名单：防止写入任意脏值
+        CheckConstraint(
+            subscription_type.in_(["language", "tag", "author", "source"]),
+            name="ck_subscription_type",
+        ),
     )
 
     def __repr__(self):
@@ -198,9 +202,6 @@ class MetricSnapshot(Base):
 
     source = Column(String(50), nullable=False)
     external_id = Column(String(255), nullable=False)
-    # NOTE (ADR-0002, 2026-08-06): `category` is intentionally KEPT as a column for
-    # per-entity classification (HF pipeline tag / GitHub language) but REMOVED from the
-    # daily uniqueness key. One row per entity per day; trend comparison is by external_id.
     category = Column(String(100), nullable=True, default="")
 
     rank = Column(Integer, nullable=True)
@@ -223,7 +224,7 @@ class NewsCluster(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     canonical_item_id = Column(Integer, ForeignKey("content_items.id", ondelete="CASCADE"), nullable=False)
-    member_item_ids = Column(JSON, nullable=False, default=[])  # list of ContentItem.id
+    member_item_ids = Column(JSONB, nullable=False, default=[])  # list of ContentItem.id
     cluster_method = Column(String(50), nullable=False)  # "exact_url" | "title_similarity" | "embedding"
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -233,3 +234,31 @@ class NewsCluster(Base):
 
     def __repr__(self):
         return f"<NewsCluster(id={self.id}, canonical={self.canonical_item_id}, members={len(self.member_item_ids or [])})>"
+
+
+class PipelineRun(Base):
+    """每次采集/处理批次的运行指标
+    记录每个 source 在一次 daily_run 中的采集/处理/失败计数与失败阶段，
+    供 /health 展示最近一次运行情况。
+    """
+
+    __tablename__ = "pipeline_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_type = Column(String(30), nullable=False, default="daily")  # daily | lightweight | review
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    source = Column(String(30), nullable=False, default="")
+    collected = Column(Integer, nullable=False, default=0)
+    processed_ok = Column(Integer, nullable=False, default=0)
+    processed_failed = Column(Integer, nullable=False, default=0)
+    failed_by_stage = Column(JSON, nullable=True, default={})  # {"collect": 0, "process": 0}
+    note = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("idx_pipeline_run_started", "started_at"),
+        Index("idx_pipeline_run_type_source", "run_type", "source"),
+    )
+
+    def __repr__(self):
+        return f"<PipelineRun(id={self.id}, type={self.run_type}, source={self.source}, collected={self.collected})>"

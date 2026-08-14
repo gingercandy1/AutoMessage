@@ -15,13 +15,15 @@ class TestGitHubCollectorRateLimit:
     @pytest.mark.asyncio
     async def test_get_star_growth_retries_on_rate_limit(self, mock_client):
         """get_star_growth 遇到速率限制应重试"""
+        from datetime import datetime, timezone
+        recent = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         collector = GitHubCollector(client=mock_client)
         
         # First call (initial page) raises rate limit, second succeeds, third (last page) succeeds
         mock_client.list_stargazers_page.side_effect = [
             GitHubRateLimitError("Rate limited", reset_at=0),  # First call fails
-            ([{"starred_at": "2024-01-15T10:00:00Z"}], {"last": 1}),  # Second call (retry initial) succeeds
-            ([{"starred_at": "2024-01-15T10:00:00Z"}], {"last": 1})  # Third call (last page) succeeds
+            ([{"starred_at": recent}], {"last": 1}),  # Second call (retry initial) succeeds
+            ([{"starred_at": recent}], {"last": 1})  # Third call (last page) succeeds
         ]
 
         result = await collector.get_star_growth("owner", "repo", days=7, max_pages=1)

@@ -1,17 +1,11 @@
-"""Pipeline health / observability (ADR-0001 §7).
-
-Exposes a plain callable `get_pipeline_health()` so it can be consumed by:
-  - a future FastAPI `/health` endpoint,
-  - the bot `/status` command,
-  - unit tests (no network / no HTTP server needed).
-"""
+"""Pipeline health / observability (ADR-0001 §7)."""
 from datetime import datetime, timezone
 from typing import Any, Dict
 
 from sqlalchemy import func, select, case
 
 from app.database import SessionLocal
-from app.database.models import ContentItem, MetricSnapshot
+from app.database.models import ContentItem, MetricSnapshot, PipelineRun
 from app.logger import AppLogger
 
 logger = AppLogger.get(__name__)
@@ -85,6 +79,7 @@ def get_pipeline_health() -> Dict[str, Any]:
             "total_items": total_items,
             "overall_success_rate_pct": round(success_rate, 2),
             "per_source": per_source,
+            "last_runs": _recent_pipeline_runs(db),
         }
     except Exception as e:  # never let health check itself crash the caller
         logger.error(f"get_pipeline_health failed: {e}")
@@ -94,6 +89,64 @@ def get_pipeline_health() -> Dict[str, Any]:
             "total_items": 0,
             "overall_success_rate_pct": 0.0,
             "per_source": {},
+            "last_runs": [],
         }
+    finally:
+        db.close()
+
+
+def _recent_pipeline_runs(db, limit: int = 10) -> list:
+    """最近几次 PipelineRun 概要（供 /health 展示）。"""
+    try:
+        rows = (
+            db.query(PipelineRun)
+            .order_by(PipelineRun.started_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "run_type": r.run_type,
+                "source": r.source,
+                "collected": r.collected,
+                "processed_ok": r.processed_ok,
+                "processed_failed": r.processed_failed,
+                "failed_by_stage": r.failed_by_stage or {},
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
+def record_pipeline_run(
+    run_type: str,
+    source: str,
+    collected: int = 0,
+    processed_ok: int = 0,
+    processed_failed: int = 0,
+    failed_by_stage: dict | None = None,
+    note: str | None = None,
+    started_at=None,
+    finished_at=None,
+) -> None:
+    db = SessionLocal()
+    try:
+        db.add(PipelineRun(
+            run_type=run_type,
+            source=source,
+            collected=collected,
+            processed_ok=processed_ok,
+            processed_failed=processed_failed,
+            failed_by_stage=failed_by_stage or {},
+            note=note,
+            started_at=started_at or datetime.now(timezone.utc),
+            finished_at=finished_at or datetime.now(timezone.utc),
+        ))
+        db.commit()
+    except Exception as e:
+        logger.error(f"记录 PipelineRun 失败: {e}")
     finally:
         db.close()

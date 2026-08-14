@@ -16,9 +16,7 @@ logger = AppLogger.get(__name__)
 class BatchSummary:
     def __init__(self,
                  analyzer: BaseAnalyzer = None,
-                 source: str = "gitHub",
-                 provider: str = None):
-        self.provider = provider or settings.default_llm_provider
+                 source: str = "gitHub"):
         self.analyzer = analyzer
         self.source = source
 
@@ -40,12 +38,12 @@ class BatchSummary:
         if not projects:
             logger.info("📊 没有待处理项目")
             return {"total": 0, "success": 0, "failed": 0}
-        logger.info(f"🚀 开始处理 {len(projects)} 个项目 (provider: {self.provider})")
+        logger.info(f"🚀 开始处理 {len(projects)} 个项目")
 
         success = 0
         failed = 0
         semaphore = asyncio.Semaphore(batch_size)
-        async with ProjectSummarizer(provider=self.provider) as summarizer:
+        async with ProjectSummarizer() as summarizer:
             tasks = [
                 self._process_single(summarizer, project, semaphore)
                 for project in projects
@@ -85,7 +83,7 @@ class BatchSummary:
                         install_step=summary_data.get("install_step", ""),
                         maturity_level=summary_data.get("maturity_level", ""),
                         source_quotes=summary_data.get("source_quotes", None),  # Q3/Q6 新闻原文摘录
-                        model_used=summary_data.get("model", self.provider),
+                        model_used=summary_data.get("model", ""),
                         token_cost=summary_data.get("token_cost", 0.0)
                     )
                     db.merge(summary)

@@ -78,11 +78,6 @@ class Settings(BaseSettings):
     )
 
     # ============ LLM Providers ============
-    default_llm_provider: str = Field(
-        default="ollama",
-        description="Default LLM provider: ollama, openrouter, openai"
-    )
-
     # OpenRouter
     openrouter_api_key: str = Field(
         default="",
@@ -93,15 +88,31 @@ class Settings(BaseSettings):
         description="OpenRouter Model"
     )
 
-    # OpenAI
+    # OpenAI (also any OpenAI-compatible endpoint via openai_base_url)
     openai_api_key: str = Field(
         default="",
-        description="OpenAI API Key"
+        description="OpenAI API Key (also used by the opencode provider)"
     )
     openai_model: str = Field(
         default="gpt-4o-mini",
         description="OpenAI Model"
     )
+    openai_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="OpenAI-compatible base URL (Chat Completions). Override to target any compatible server."
+    )
+
+    # OpenCode (https://github.com/sst/opencode) — speaks the OpenAI-compatible protocol
+    opencode_base_url: str = Field(
+        default="http://localhost:2424/v1",
+        description="OpenCode local server base URL (OpenAI-compatible). Default local endpoint."
+    )
+    opencode_model: str = Field(
+        default="",
+        description="OpenCode model id (defaults to openai_model if empty)"
+    )
+
+    provider_fallback_order: list[str] = ["groq", "openrouter", "opencode", "ollama"]
 
     # ============ News ============
     news_hn_min_score: int = Field(
@@ -178,6 +189,10 @@ class Settings(BaseSettings):
         elif self.default_llm_provider == "openai":
             logger.info(f"🔑 OpenAI Model: {self.openai_model}")
             logger.info(f"🔑 OpenAI Key: {self.openai_api_key[:10]}...{self.openai_api_key[-4:] if self.openai_api_key else 'NOT SET'}")
+            logger.info(f"🔑 OpenAI Base URL: {self.openai_base_url}")
+        elif self.default_llm_provider == "opencode":
+            logger.info(f"🔑 OpenCode Model: {self.opencode_model or self.openai_model}")
+            logger.info(f"🔑 OpenCode Base URL: {self.opencode_base_url}")
         else:
             logger.info(f"🔑 Ollama Model: {self.ollama_model}")
             logger.info(f"🔑 Ollama URL: {self.ollama_url}")

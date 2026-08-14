@@ -68,6 +68,10 @@ services:
       - ./app:/app/app
       - ./migrations:/app/migrations
       - ./alembic.ini:/app/alembic.ini
+    # 启动前先跑迁移建表（含 PipelineRun），再启动 bot。
+    # 用 sh -c 串起：迁移成功才启动；迁移失败则容器退出（restart: always 会重试）。
+    command: >
+      sh -c "alembic upgrade head && python -m app.bot.main"
 
 networks:
   ai_network:

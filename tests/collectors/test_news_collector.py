@@ -171,6 +171,42 @@ class TestNewsCollector:
         unique = collector._deduplicate(items)
         assert len(unique) == 1  # 标题高度相似 → 归入同一簇
 
+    @pytest.mark.asyncio
+    async def test_enrich_full_text_reuses_rss_content(self, collector):
+        """Q3: RSS 条目已有 content 时，直接写入 raw_data['full_text']，不再联网。"""
+        items = [{
+            "url": "https://blog.example.com/post",
+            "title": "Post",
+            "raw_data": {"content": "<p>Full article body here.</p>"},
+        }]
+        # _fetch_full_text 不应被调用（RSS content 已足够）
+        with patch.object(collector, "_fetch_full_text", new=AsyncMock()) as mocked:
+            await collector._enrich_full_text(items)
+        mocked.assert_not_awaited()
+        assert items[0]["raw_data"]["full_text"] == "<p>Full article body here.</p>"
+
+    @pytest.mark.asyncio
+    async def test_enrich_full_text_fetches_when_missing(self, collector):
+        """Q3: 无缓存正文时，按 URL 抓取并写入 raw_data['full_text']。"""
+        items = [{"url": "https://news.example.com/a", "title": "A", "raw_data": {}}]
+        with patch.object(
+            collector, "_fetch_full_text", new=AsyncMock(return_value="Extracted body text.")
+        ) as mocked:
+            await collector._enrich_full_text(items)
+        mocked.assert_awaited_once_with("https://news.example.com/a")
+        assert items[0]["raw_data"]["full_text"] == "Extracted body text."
+
+    @pytest.mark.asyncio
+    async def test_enrich_full_text_fetch_failure_is_safe(self, collector):
+        """Q3: 抓取失败不抛出、不阻断，raw_data 保持原样。"""
+        items = [{"url": "https://bad.example.com", "title": "B", "raw_data": {"x": 1}}]
+        with patch.object(
+            collector, "_fetch_full_text", new=AsyncMock(return_value="")
+        ):
+            await collector._enrich_full_text(items)  # must not raise
+        assert "full_text" not in items[0]["raw_data"]
+
+
 
 class TestHackerNewsClient:
     """测试 HackerNewsClient"""
