@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from app.api.reddit_client import RedditClient
 from app.collectors.base import BaseCollector
-from app.collectors.news_base import (
+from app.collectors.news.news_base import (
     NewsDeduplicator,
     save_news_items,
     register_news_source,

@@ -1,11 +1,10 @@
 import asyncio
 import trafilatura
 import httpx
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 from readability import Document
 from app.collectors.base import BaseAnalyzer
 from app.collectors.github_analyzer import DataCleaner
-from app.config import settings
 from app.database.models import ContentItem
 from app.logger import AppLogger
 

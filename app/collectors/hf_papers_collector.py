@@ -1,11 +1,4 @@
-"""HuggingFace Papers 采集器（T05）。
-
-用 HuggingFace Papers API（替代已关停的 Papers with Code）采集 AI/ML 论文，
-以 source="hf_papers" 落库并进入跨源去重与审查链路。
-复用现有 hugging_face_token（公开接口不需要认证，token 为空也可用）。
-"""
 import asyncio
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -13,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.collectors.base import BaseCollector
-from app.collectors.news_base import (
+from app.collectors.news.news_base import (
     NewsDeduplicator,
     save_news_items,
     register_news_source,

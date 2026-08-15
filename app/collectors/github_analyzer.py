@@ -116,6 +116,7 @@ class GitHubAnalyzer(BaseAnalyzer):
     async def _analyze_repository(self, repo_url: str) -> Dict[str, Any]:
         try:
             owner, repo = self.client.parse_github_url(repo_url)
+            repo_info = service.search_project(f"{owner}/{repo}")
             logger.info(f"🔍 分析项目: {owner}/{repo}")
             tasks = [
                 self._get_readme(owner, repo),
@@ -130,16 +131,12 @@ class GitHubAnalyzer(BaseAnalyzer):
             results = await asyncio.gather(*tasks, return_exceptions=True)
             readme, commits_data, issues, deps, topics, contributors, languages = results
 
-            # 清理 README
-            cleaned_readme = self.cleaner.clean_readme(readme) if not isinstance(readme, Exception) else ""
-            repo_info = service.search_project(f"{owner}/{repo}")
-
             analysis = {
                 "repo_url": f"https://github.com/{owner}/{repo}",
                 "owner": owner,
                 "name": repo,
                 "repo_info": repo_info if repo_info else {},
-                "readme": cleaned_readme,
+                "readme": self.cleaner.clean_readme(readme) if not isinstance(readme, Exception) else "",
                 "commits_activity": commits_data if not isinstance(commits_data, Exception) else {},
                 "issues": issues if not isinstance(issues, Exception) else {},
                 "dependencies": deps if not isinstance(deps, Exception) else {},
@@ -247,7 +244,7 @@ class GitHubAnalyzer(BaseAnalyzer):
         analysis = await self._analyze_repository(repo_url)
 
         readme = analysis.get("readme", "")
-        readme_text = readme[:6000] if len(readme) > 6000 else readme  # 留点余量给其他信息
+        readme_text = readme[:6000] if len(readme) > 6000 else readme
 
         repo_info = analysis.get("repo_info", {})
         commits_activity = analysis.get("commits_activity", {})
@@ -262,7 +259,6 @@ class GitHubAnalyzer(BaseAnalyzer):
             topics=topics, contributors=contributors, languages=languages,
         )
 
-        # #06 渐进式 README：保留核心内容，标注已截断，避免一次性塞满上下文
         readme_note = ""
         if len(readme) > 6000:
             readme_note = "\n（README 已截断至前 6000 字符，关键结论请基于下方结构化指标推断）\n"

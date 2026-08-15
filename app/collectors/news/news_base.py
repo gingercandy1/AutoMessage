@@ -1,13 +1,3 @@
-"""Shared plumbing for the news source family (T01).
-
-- NEWS_SOURCES registry: single source of truth for which ContentItem.source values
-  are "news" (drive review/summary/push filters). New collectors register here so
-  their items flow through the whole review chain automatically.
-- NewsDeduplicator: cross-source URL/title dedup + NewsCluster writing, usable by
-  ANY news collector, not just NewsCollector.
-- save_news_items: shared ContentItem + MetricSnapshot + cluster persistence.
-"""
-import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -26,7 +16,6 @@ logger = AppLogger.get(__name__)
 
 async def fetch_full_text(url: str) -> str:
     """抓取并提取文章正文（Q3：采集时缓存全文，避免摘要时再联网漂移）。
-
     失败返回空串，绝不抛出——采集流程不能因单篇正文抓取失败而中断。
     """
     try:

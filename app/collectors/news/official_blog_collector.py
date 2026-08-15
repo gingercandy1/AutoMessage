@@ -15,7 +15,7 @@ from urllib.parse import urljoin
 import httpx
 
 from app.collectors.base import BaseCollector
-from app.collectors.news_base import (
+from app.collectors.news.news_base import (
     NewsDeduplicator,
     save_news_items,
     register_news_source,

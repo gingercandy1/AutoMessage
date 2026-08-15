@@ -1,9 +1,4 @@
-"""LLM 排行榜采集器（T07-T10）。
-
-真正调用各平台 API/页面抓取排行榜数据，external_id = `平台::模型名`，
-每平台独立成行、信息不互相覆盖；每平台 Top N（默认 30）；
-摘要只对首次出现的模型生成（已存在仅更新 metrics，不重跑摘要）。
-
+"""LLM 排行榜采集器。
 平台（config 可覆盖 payload 便于测试）：
 - artificial_analysis: `GET /api/v2/language/models/free`（需 free API key，缺失则跳过）
 - lmarena: arena.ai/leaderboard 页面内嵌 JSON 提取（无需 key）
@@ -11,6 +6,7 @@
 - vellum: 页面内嵌 JSON 提取（无需 key）
 - seal: Scale AI SEAL 页面内嵌 JSON 提取（无需 key）
 """
+
 import hashlib
 import json
 import re
@@ -54,11 +50,8 @@ class LLMLeaderboardCollector(BaseCollector):
         self.seal_url = settings.seal_leaderboard_url
         self.top_n = settings.llm_leaderboard_top_n
 
-    # ==================== 归一化（platform -> unified entry） ====================
-
     def _normalize_artificial_analysis(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         """AA free Data API response -> unified entries.
-
         payload = {"tier": ..., "pagination": {...}, "data": [...]}
         每行关键字段：id/name/model_creator.name/evaluations.artificial_analysis_intelligence_index/
         pricing.price_1m_input_tokens / price_1m_output_tokens
@@ -94,7 +87,6 @@ class LLMLeaderboardCollector(BaseCollector):
 
     def _normalize_lmsys(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         """LMArena(arena.ai) 页面内嵌 leaderboard entries -> unified entries。
-
         payload 形如：[{"rank":1,"modelDisplayName":"...","rating":1506.48,
                         "votes":...,"modelOrganization":"...","modelUrl":"...",
                         "inputPricePerMillion":...,"outputPricePerMillion":...}]
@@ -121,8 +113,6 @@ class LLMLeaderboardCollector(BaseCollector):
 
     def _normalize_openrouter(self, payload: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """OpenRouter /api/v1/models response ["data"] -> unified entries。
-
-        行内：id/name/created/pricing.prompt/output 等。用 top 的 context 大小或热度近似排序。
         """
         rows = payload if isinstance(payload, list) else (payload.get("data", []) if isinstance(payload, dict) else [])
         ranked = sorted(
@@ -151,7 +141,6 @@ class LLMLeaderboardCollector(BaseCollector):
 
     def _normalize_vellum(self, payload: Any) -> List[Dict[str, Any]]:
         """Vellum 页面内嵌 JSON -> unified entries。
-
         结构不固定，兼容多种字段名（model/name/modelDisplayName/rank/score/rating/llm 等）。
         """
         entries = self._coerce_entries(payload)
@@ -215,8 +204,6 @@ class LLMLeaderboardCollector(BaseCollector):
                     out.append(merged)
             return out
         return []
-
-    # ==================== 抓取 ====================
 
     async def _fetch_artificial_analysis(self) -> List[Dict[str, Any]]:
         if not (self.aa_api_key and self.aa_api_key.strip()):
@@ -422,8 +409,6 @@ class LLMLeaderboardCollector(BaseCollector):
                     return found
         return []
 
-    # ==================== 归一化 -> ContentItem（T07 平台建模） ====================
-
     def _to_content_items(self, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         now = datetime.now(timezone.utc)
         items = []
@@ -530,7 +515,6 @@ class LLMLeaderboardCollector(BaseCollector):
 
     async def fetch(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """采集全部平台并落库。
-
         config 可选覆盖各平台 payload（测试用）：{"artificial_analysis": {...}, "lmarena": [...]}
         或 {"platforms": ["lmarena", "openrouter"]} 限制平台。
         """

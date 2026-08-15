@@ -2,17 +2,13 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional, Set
-
-import httpx
-import trafilatura
+from typing import List, Dict, Any, Optional
 
 from app.api.hackernews_client import HackerNewsClient
 from app.api.rss_client import RSSClient, RSSFeedEntry
 from app.collectors.base import BaseCollector
-from app.collectors.news_base import (
+from app.collectors.news.news_base import (
     NewsDeduplicator,
-    save_news_items,
     fetch_full_text,
     matches_keywords as _matches_keywords_impl,
     categorize_news as _categorize_news_impl,

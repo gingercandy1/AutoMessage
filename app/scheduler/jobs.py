@@ -7,7 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.ai.processor import BatchSummary
 from app.collectors.base import BaseCollector, BaseAnalyzer
-from app.collectors.news_base import NEWS_SOURCES
+from app.collectors.news.news_base import NEWS_SOURCES
 from app.config import settings
 from app.database import SessionLocal
 from app.database.models import Subscription
@@ -21,12 +21,13 @@ from app.collectors.github_collector import GitHubCollector
 from app.collectors.github_analyzer import GitHubAnalyzer
 from app.collectors.huggingface_collector import HuggingFaceCollector
 from app.collectors.huggingface_analyzer import HuggingFaceAnalyzer
-from app.collectors.news_collector import NewsCollector
-from app.collectors.news_analyzer import NewsAnalyzer
-from app.collectors.reddit_collector import RedditCollector
-from app.collectors.producthunt_collector import ProductHuntCollector
-from app.collectors.official_blog_collector import OfficialBlogCollector
+from app.collectors.news.news_collector import NewsCollector
+from app.collectors.news.news_analyzer import NewsAnalyzer
+from app.collectors.news.reddit_collector import RedditCollector
+from app.collectors.news.producthunt_collector import ProductHuntCollector
+from app.collectors.news.official_blog_collector import OfficialBlogCollector
 from app.collectors.hf_papers_collector import HFPapersCollector
+from app.collectors.llm_leaderboard_collector import LLMLeaderboardCollector
 
 logger = AppLogger.get(__name__)
 
@@ -137,7 +138,6 @@ class JobScheduler:
 
     async def news_collect(self):
         """T06：每日第二次采集，只跑新闻类源（8:00 之外的 13:00 场）。
-
         新闻源 = collector NAME ∈ NEWS_SOURCES。非新闻源（GitHub、HF 模型、
         LLM 排行榜）不受影响。两次运行共用跨源去重（NewsCluster 合并）。
         """
@@ -234,10 +234,9 @@ class JobScheduler:
         logger.info("✅ 轻量快照完成")
 
     async def weekly_leaderboard(self):
-        """#07 每周采集 LLM 排行榜（AA/LMArena/OpenRouter/Vellum/SEAL），落库到 ContentItem。"""
+        """#07 每周采集 LLM 排行榜"""
         logger.info("🤖 启动每周 LLM 排行榜采集...")
         try:
-            from app.collectors.llm_leaderboard_collector import LLMLeaderboardCollector
             collector = LLMLeaderboardCollector()
             items = await collector.fetch()
             logger.info(f"✅ LLM 排行榜采集完成: {len(items)} 条")
@@ -245,11 +244,10 @@ class JobScheduler:
             logger.error(f"❌ LLM 排行榜采集失败: {e}")
 
     async def daily_push(self):
-        """定时主动推送（ADR-0003 bot push）：推给所有已订阅用户/群组。"""
+        """定时主动推送：推给所有已订阅用户/群组。"""
         logger.info("📤 启动主动推送流程...")
         db = SessionLocal()
         try:
-            # 去重取所有活跃订阅的 telegram_id
             rows = (
                 db.query(Subscription.telegram_id)
                 .filter(Subscription.is_active == 1)

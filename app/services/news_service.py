@@ -4,7 +4,7 @@ from typing import List, Optional
 from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from app.collectors.news_base import NEWS_SOURCES
+from app.collectors.news.news_base import NEWS_SOURCES
 from app.database import SessionLocal
 from app.database.models import ContentItem, UserFavorite, Summary
 
