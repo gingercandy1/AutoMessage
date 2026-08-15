@@ -7,6 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.ai.processor import BatchSummary
 from app.collectors.base import BaseCollector, BaseAnalyzer
+from app.collectors.news_base import NEWS_SOURCES
 from app.config import settings
 from app.database import SessionLocal
 from app.database.models import Subscription
@@ -22,6 +23,10 @@ from app.collectors.huggingface_collector import HuggingFaceCollector
 from app.collectors.huggingface_analyzer import HuggingFaceAnalyzer
 from app.collectors.news_collector import NewsCollector
 from app.collectors.news_analyzer import NewsAnalyzer
+from app.collectors.reddit_collector import RedditCollector
+from app.collectors.producthunt_collector import ProductHuntCollector
+from app.collectors.official_blog_collector import OfficialBlogCollector
+from app.collectors.hf_papers_collector import HFPapersCollector
 
 logger = AppLogger.get(__name__)
 
@@ -33,10 +38,23 @@ class JobScheduler:
         self.scheduler = AsyncIOScheduler()
         self.collector_dict = BaseCollector.collect_dict()
         self.analyzer_dict = BaseAnalyzer.analyzer_dict()
-        self.batch_processor_dict = {
-            key: BatchSummary(analyzer=self.analyzer_dict.get(key), source=key)
-            for key in self.collector_dict.keys()
-        }
+        self.batch_processor_dict = self._build_batch_processors()
+
+    def _build_batch_processors(self) -> dict:
+        """批量摘要处理器。新闻族（source ∈ NEWS_SOURCES）统一由 NewsAnalyzer
+        覆盖，避免每个新闻源单独一个 BatchSummary 造成重复摘要或缺失 analyzer。"""
+        processors: dict = {}
+        for key in self.collector_dict.keys():
+            if key in NEWS_SOURCES:
+                continue
+            processors[key] = BatchSummary(
+                analyzer=self.analyzer_dict.get(key), source=key
+            )
+        news_analyzer = self.analyzer_dict.get("news")
+        processors["news"] = BatchSummary(
+            analyzer=news_analyzer, source=list(NEWS_SOURCES)
+        )
+        return processors
 
     async def setup(self):
         # 每天 8:00 采集项目
@@ -45,6 +63,13 @@ class JobScheduler:
             CronTrigger(hour=8, minute=0),
             id="daily_collect",
             name="每日采集项目"
+        )
+        # T06 每天 13:00 第二次采集新闻类源（时效性）
+        self.scheduler.add_job(
+            self.news_collect,
+            CronTrigger(hour=13, minute=0),
+            id="news_collect_afternoon",
+            name="午后新闻采集"
         )
         # 每天 9:00 主动推送（ADR-0003 bot push）
         self.scheduler.add_job(
@@ -109,6 +134,39 @@ class JobScheduler:
                 )
         except Exception as e:
             logger.error(f"❌ 采集调度失败: {e}")
+
+    async def news_collect(self):
+        """T06：每日第二次采集，只跑新闻类源（8:00 之外的 13:00 场）。
+
+        新闻源 = collector NAME ∈ NEWS_SOURCES。非新闻源（GitHub、HF 模型、
+        LLM 排行榜）不受影响。两次运行共用跨源去重（NewsCluster 合并）。
+        """
+        logger.info("📰 启动午后新闻采集（第二次）...")
+        run_started = datetime.now(timezone.utc)
+        collect_failures = 0
+        try:
+            for source, collectors in self.collector_dict.items():
+                if source not in NEWS_SOURCES:
+                    continue
+                total = 0
+                for collector in collectors:
+                    configs = collector.configs()
+                    for config in configs:
+                        try:
+                            count = await collector.fetch(config)
+                            total += count
+                        except Exception as e:
+                            collect_failures += 1
+                            logger.error(f"❌ 新闻采集失败 [{source}]: {e}")
+                        await asyncio.sleep(2)
+                    logger.info(f"✅ {source}新闻采集完成: {total} 条")
+                record_pipeline_run(
+                    run_type="news", source=source, collected=total,
+                    failed_by_stage={"collect": collect_failures},
+                    started_at=run_started,
+                )
+        except Exception as e:
+            logger.error(f"❌ 新闻采集调度失败: {e}")
 
     async def daily_process(self):
         logger.info("🌙 启动晚间批处理流程...")
@@ -176,7 +234,7 @@ class JobScheduler:
         logger.info("✅ 轻量快照完成")
 
     async def weekly_leaderboard(self):
-        """#07 每周采集 LLM 排行榜（Artificial Analysis + LMSYS），落库到 ContentItem。"""
+        """#07 每周采集 LLM 排行榜（AA/LMArena/OpenRouter/Vellum/SEAL），落库到 ContentItem。"""
         logger.info("🤖 启动每周 LLM 排行榜采集...")
         try:
             from app.collectors.llm_leaderboard_collector import LLMLeaderboardCollector

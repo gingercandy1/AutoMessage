@@ -31,7 +31,7 @@ def _render_review_card(item: ContentItem) -> str:
     title = escape(item.title or "")
     url = item.url or ""
     title_link = f'<a href="{url}">{title}</a>' if url else title
-    src = "🟠 HN" if item.source == "hacker_news" else "📰 新闻"
+    src = NewsService().get_source_label(item.source) if item.source else "📰 新闻"
     cat = escape(item.category or "ai")
     lines = [f"🔍 <b>待审查新闻</b> · {src} · {cat}", "", f"<b>{title_link}</b>"]
     if item.summary:

@@ -1,20 +1,24 @@
 import asyncio
 import hashlib
-from rapidfuzz import fuzz
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Set
 
 import httpx
 import trafilatura
-from sqlalchemy.dialects.postgresql import insert
 
 from app.api.hackernews_client import HackerNewsClient
 from app.api.rss_client import RSSClient, RSSFeedEntry
 from app.collectors.base import BaseCollector
+from app.collectors.news_base import (
+    NewsDeduplicator,
+    save_news_items,
+    fetch_full_text,
+    matches_keywords as _matches_keywords_impl,
+    categorize_news as _categorize_news_impl,
+)
 from app.config import settings
-from app.database import SessionLocal
-from app.database.models import ContentItem, MetricSnapshot, NewsCluster
+from app.database.models import ContentItem
 from app.logger import AppLogger
 
 logger = AppLogger.get(__name__)
@@ -42,47 +46,15 @@ class NewsCollector(BaseCollector):
     def __init__(self):
         self.hn_client = HackerNewsClient()
         self.rss_client = RSSClient()
+        self._deduper = NewsDeduplicator()
 
     def _matches_keywords(self, text: str, keywords: List[str]) -> bool:
-        """检查文本是否包含关键词"""
-        text_lower = text.lower()
-        # 支持词组匹配：检查完整短语和单个词
-        for kw in keywords:
-            kw_lower = kw.lower()
-            if kw_lower in text_lower:
-                return True
-            # 如果关键词包含空格，也尝试拆分匹配
-            if " " in kw_lower:
-                parts = kw_lower.split()
-                if all(part in text_lower for part in parts):
-                    return True
-        return False
+        """检查文本是否包含关键词（委托共享实现）"""
+        return _matches_keywords_impl(text, keywords)
 
     def _categorize_news(self, title: str, description: str, source: str) -> str:
-        """根据标题和描述对新闻进行分类"""
-        text = f"{title} {description}".lower()
-        
-        # LLM/大模型相关 - 放在最前面，优先匹配
-        if any(kw in text for kw in ["llm", "large language model", "gpt", "claude", "llama", "mistral", "gemini", "fine-tun", "instruct", "chat"]):
-            return "llm"
-        
-        # 研究论文相关
-        if any(kw in text for kw in ["arxiv", "paper", "research", "study", "benchmark", "evaluation"]):
-            return "research"
-        
-        # AI 通用
-        if any(kw in text for kw in ["ai", "artificial intelligence", "machine learning", "deep learning", "neural", "transformer", "generative"]):
-            return "ai"
-        
-        # 工具/框架
-        if any(kw in text for kw in ["tool", "framework", "library", "sdk", "api", "github", "open source", "release", "launch"]):
-            return "tools"
-        
-        # 行业/商业
-        if any(kw in text for kw in ["funding", "investment", "acquisition", "startup", "company", "enterprise", "business", "market"]):
-            return "industry"
-        
-        return "ai"  # 默认分类
+        """根据标题和描述对新闻进行分类（委托共享实现）"""
+        return _categorize_news_impl(title, description, source)
 
     def _normalize_hn_item(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """标准化 Hacker News 项目"""
@@ -218,128 +190,30 @@ class NewsCollector(BaseCollector):
         return normalized[:config.max_items]
 
     def _levenshtein_ratio(self, a, b):
-        if not a or not b:
-            return 0.0
-        if a == b:
-            return 1.0
-        return fuzz.ratio(a, b, score_cutoff=85.0) / 100.0
+        return self._deduper.levenshtein_ratio(a, b)
 
     def _normalize_url(self, url: str) -> str:
-        """归一化 URL：去 scheme、尾部斜杠、www.、查询参数排序，用于精确去重。"""
-        if not url:
-            return ""
-        u = url.strip().lower()
-        u = u.replace("https://", "").replace("http://", "").replace("www.", "")
-        u = u.split("?")[0].split("#")[0]
-        if u.endswith("/"):
-            u = u[:-1]
-        return u
+        return self._deduper.normalize_url(url)
 
     def _deduplicate(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """去重 + 聚类（Q10）。
+        """去重 + 聚类（Q10）。委托给共享 NewsDeduplicator。"""
+        return self._deduper.deduplicate(items)
 
-        两阶段：
-          1) exact_url：归一化 URL 完全相同 -> 同一簇
-          2) title_similarity：标题 Levenshtein 相似度 >= 0.85 -> 同一簇
-        返回保留项（每簇第一条为 canonical），并把簇信息暂存到 self._last_clusters。
-        """
-        if not settings.news_dedup_enabled or not items:
-            self._last_clusters = []
-            return items
+    @property
+    def _last_clusters(self) -> List[List[int]]:
+        return self._deduper._last_clusters
 
-        clusters: List[List[int]] = []          # 每个簇是 items 下标列表
-        url_to_cluster: Dict[str, int] = {}
-        title_to_cluster: List[tuple] = []       # (norm_title, cluster_idx)
-
-        unique: List[Dict[str, Any]] = []
-        for idx, item in enumerate(items):
-            url = self._normalize_url(item.get("url", ""))
-            title = (item.get("title", "") or "").strip().lower()
-
-            # 1) exact url
-            if url and url in url_to_cluster:
-                clusters[url_to_cluster[url]].append(idx)
-                continue
-            # 2) title similarity
-            merged = False
-            for t_norm, c_idx in title_to_cluster:
-                if self._levenshtein_ratio(title, t_norm) >= 0.85:
-                    clusters[c_idx].append(idx)
-                    merged = True
-                    break
-            if merged:
-                continue
-
-            # 新簇
-            new_c = len(clusters)
-            clusters.append([idx])
-            unique.append(item)
-            if url:
-                url_to_cluster[url] = new_c
-            if title:
-                title_to_cluster.append((title, new_c))
-
-        # 只在簇大小>1 时记录（用于写入 NewsCluster）
-        self._last_clusters = [grp for grp in clusters if len(grp) > 1]
-        logger.info(f"🔄 去重+聚类: {len(items)} -> {len(unique)} (簇:{len(self._last_clusters)})")
-        return unique
+    @_last_clusters.setter
+    def _last_clusters(self, value: List[List[int]]) -> None:
+        self._deduper._last_clusters = value
 
     def _write_clusters(self, item_id_by_index: Dict[int, int]):
-        """将本次批次内的簇写入 NewsCluster 表（canonical=簇首）。
-
-        跨运行去重（Q10 v1）：若某个成员已属于既有 NewsCluster，则把本次新成员
-        并入既有簇（以既有 canonical 为准），不再新建重复 canonical，避免同一
-        新闻在多次采集后产生多个簇、进而导致频道重复推送。
-        """
-        if not getattr(self, "_last_clusters", None):
-            return
-        db = SessionLocal()
-        try:
-            for grp in self._last_clusters:
-                member_ids = [item_id_by_index[i] for i in grp if i in item_id_by_index]
-                if len(member_ids) < 2:
-                    continue
-                # 既有簇查找：任一成员已出现在某个 NewsCluster 里
-                existing = (
-                    db.query(NewsCluster)
-                    .filter(NewsCluster.member_item_ids.op("&&")(member_ids))
-                    .first()
-                )
-                if existing:
-                    merged = list(set((existing.member_item_ids or []) + member_ids))
-                    existing.member_item_ids = merged
-                    db.add(existing)
-                    continue
-                db.add(NewsCluster(
-                    canonical_item_id=member_ids[0],
-                    member_item_ids=member_ids,
-                    cluster_method="exact_url|title_similarity",
-                ))
-            db.commit()
-        finally:
-            db.close()
+        """委托给共享 NewsDeduplicator 写 NewsCluster。"""
+        self._deduper.write_clusters(item_id_by_index)
 
     async def _fetch_full_text(self, url: str) -> str:
-        """抓取并提取文章正文（Q3：采集时缓存全文，避免摘要时再联网漂移）。
-
-        失败返回空串，绝不抛出——采集流程不能因单篇正文抓取失败而中断。
-        """
-        try:
-            async with httpx.AsyncClient(
-                timeout=20.0, follow_redirects=True,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            ) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-            extracted = trafilatura.extract(
-                resp.text, include_comments=False, include_tables=False, no_fallback=False
-            )
-            if extracted and len(extracted) > 200:
-                return extracted[:8000]
-            return ""
-        except Exception as e:
-            logger.warning(f"新闻正文抓取失败 {url}: {e}")
-            return ""
+        """抓取并提取文章正文（Q3，委托共享实现）"""
+        return await fetch_full_text(url)
 
     async def _enrich_full_text(self, items: List[Dict[str, Any]]) -> None:
         """采集时为每条新闻缓存全文到 raw_data['full_text']（Q3）。

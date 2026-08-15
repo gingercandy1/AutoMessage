@@ -4,6 +4,7 @@ from typing import List, Optional
 from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.collectors.news_base import NEWS_SOURCES
 from app.database import SessionLocal
 from app.database.models import ContentItem, UserFavorite, Summary
 
@@ -21,7 +22,16 @@ class NewsService:
     SOURCE_LABELS = {
         "hacker_news": "🟠 HN",
         "news": "📰 News",
+        "reddit": "🔴 Reddit",
+        "producthunt": "🚀 Product Hunt",
+        "official_blog": "🏢 官方博客",
+        "hf_papers": "📄 HF Papers",
     }
+
+    #: 属于“新闻”的 source 值（由各采集器注册到 NEWS_SOURCES 后自动生效）
+    @property
+    def news_sources(self):
+        return list(NEWS_SOURCES)
 
     def get_latest(self, limit: int = 100) -> List[ContentItem]:
         """最新新闻（按发现时间）"""
@@ -29,7 +39,7 @@ class NewsService:
         try:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
-                .filter(ContentItem.source == self.NAME) \
+                .filter(ContentItem.source.in_(self.news_sources)) \
                 .order_by(desc(ContentItem.discovered_at)) \
                 .limit(limit) \
                 .all()
@@ -43,7 +53,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source == self.NAME) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (ContentItem.category == category)
                 ) \
                 .order_by(desc(ContentItem.discovered_at)) \
@@ -75,7 +85,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (func.date(ContentItem.discovered_at) >= cutoff_date)
                 ) \
                 .order_by(desc(ContentItem.metrics["hn_score"].as_integer())) \
@@ -90,7 +100,7 @@ class NewsService:
         try:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
-                .filter(ContentItem.source.in_(["hacker_news", "news"])) \
+                .filter(ContentItem.source.in_(self.news_sources)) \
                 .order_by(desc(ContentItem.metrics["hn_score"].as_integer())) \
                 .limit(limit) \
                 .all()
@@ -105,7 +115,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (func.date(ContentItem.discovered_at) >= cutoff_date)
                 ) \
                 .order_by(desc(ContentItem.discovered_at)) \
@@ -122,7 +132,7 @@ class NewsService:
                 .options(joinedload(ContentItem.summary)) \
                 .join(UserFavorite, UserFavorite.project_id == ContentItem.id) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (UserFavorite.telegram_id == telegram_id)
                 ) \
                 .order_by(desc(UserFavorite.created_at)) \
@@ -138,7 +148,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (
                         (ContentItem.title.ilike(f"%{keyword}%")) |
                         (ContentItem.author.ilike(f"%{keyword}%")) |
@@ -158,7 +168,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (ContentItem.processed == 1) &
                     (ContentItem.review_status.is_(None))
                 ) \
@@ -175,7 +185,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (ContentItem.review_status == "approved")
                 ) \
                 .order_by(desc(ContentItem.discovered_at)) \
@@ -203,7 +213,7 @@ class NewsService:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
                 .filter(
-                    (ContentItem.source.in_(["hacker_news", "news"])) &
+                    (ContentItem.source.in_(self.news_sources)) &
                     (ContentItem.id == item_id)
                 ) \
                 .first()
