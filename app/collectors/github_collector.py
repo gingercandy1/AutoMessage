@@ -373,20 +373,18 @@ class GitHubTrendingCollector(BaseCollector):
         return headers
 
     async def fetch(self, config: GithubConfig = None, since: str = "daily") -> int:
-        return 0
-
-        """
-        抓取一次 Trending 列表
+        """抓取一次 Trending 列表
         :param config:
         :param since: "daily" / "weekly" / "monthly"
         :return: 本次入库/更新的项目数量（int），供调度器累加统计
         """
         url = self.BASE_URL
-        if config.language:
-            url += f"/{config.language}"
+        language = getattr(config, "language", None)
+        if language:
+            url += f"/{language}"
 
         params = {"since": since}
-        logger.info(f"🔍 抓取 GitHub Trending: language={config.language or '全部'}, since={since}")
+        logger.info(f"🔍 抓取 GitHub Trending: language={language or '全部'}, since={since}")
         try:
             headers = self._build_headers()
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
