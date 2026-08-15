@@ -16,7 +16,7 @@ logger = AppLogger.get(__name__)
 class BatchSummary:
     def __init__(self,
                  analyzer: BaseAnalyzer = None,
-                 source: str = "gitHub"):
+                 source=None):
         self.analyzer = analyzer
         self.source = source
 
@@ -24,12 +24,16 @@ class BatchSummary:
         db = SessionLocal()
         try:
             summarized_ids = select(Summary.project_id)
-            return (
+            query = (
                 db.query(ContentItem)
-                .filter((ContentItem.processed == 0) & (ContentItem.source == self.source))
+                .filter((ContentItem.processed == 0))
                 .filter(~ContentItem.id.in_(summarized_ids))
-                .all()
             )
+            if isinstance(self.source, (list, tuple, set)):
+                query = query.filter(ContentItem.source.in_(list(self.source)))
+            elif self.source:
+                query = query.filter(ContentItem.source == self.source)
+            return query.all()
         finally:
             db.close()
 

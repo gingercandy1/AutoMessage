@@ -35,7 +35,7 @@ class TestBatchSummaryCostPersistence:
     async def test_process_single_persists_token_cost(self, mock_analyzer, mock_project, mock_db_session):
         """_process_single 应将 token_cost 保存到 Summary"""
         # Arrange
-        batch = BatchSummary(analyzer=mock_analyzer, source="github", provider="openrouter")
+        batch = BatchSummary(analyzer=mock_analyzer, source="github")
         
         mock_summarizer = AsyncMock()
         mock_summarizer.summarize = AsyncMock(return_value={

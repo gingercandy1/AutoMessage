@@ -136,6 +136,54 @@ class Settings(BaseSettings):
         description="Enable deduplication for news"
     )
 
+    # ---- 新新闻源（T02-T05） ----
+    reddit_subreddits: str = Field(
+        default="LocalLLaMA,singularity,OpenAI,artificial",
+        description="Comma-separated Reddit subreddits to collect (T02)"
+    )
+    reddit_min_score: int = Field(
+        default=50,
+        description="Minimum Reddit post score to collect (T02)"
+    )
+    product_hunt_token: str = Field(
+        default="",
+        description="Product Hunt GraphQL developer token (T03). Empty -> source skipped."
+    )
+    product_hunt_min_votes: int = Field(
+        default=20,
+        description="Minimum Product Hunt votes to collect (T03)"
+    )
+    official_blog_feeds: str = Field(
+        default="https://openai.com/news/,https://www.anthropic.com/news,https://api-docs.deepseek.com/news/,https://mistral.ai/news/,https://blog.google/technology/ai/",
+        description="Comma-separated official model-release blog listing page URLs (T04)"
+    )
+    hf_papers_limit: int = Field(
+        default=50,
+        description="Max HF papers to collect per run (T05)"
+    )
+
+    # ---- LLM 排行榜真 API（T07-T10） ----
+    artificial_analysis_api_key: str = Field(
+        default="",
+        description="Artificial Analysis free Data API key (T07). Empty -> AA source skipped."
+    )
+    llm_leaderboard_top_n: int = Field(
+        default=30,
+        description="Per-platform Top N models collected for leaderboards (T07)"
+    )
+    llm_leaderboard_url: str = Field(
+        default="https://arena.ai/leaderboard",
+        description="LMArena leaderboard page URL for embedded data extraction (T07)"
+    )
+    vellum_leaderboard_url: str = Field(
+        default="https://www.vellum.ai/llm-leaderboard",
+        description="Vellum LLM leaderboard page URL (T09)"
+    )
+    seal_leaderboard_url: str = Field(
+        default="https://scale.com/leaderboard",
+        description="Scale AI SEAL leaderboard page URL (T10)"
+    )
+
     class Config:
         # 环境变量前缀
         env_prefix = ""
@@ -182,20 +230,14 @@ class Settings(BaseSettings):
         logger.info(f"📦 Database: {self.database_url.split('@')[1] if '@' in self.database_url else 'unknown'}")
         logger.info(f"🔴 Redis: {self.redis_url}")
         logger.info(f"📝 Log Level: {self.log_level}")
-        logger.info(f"🤖 Default LLM Provider: {self.default_llm_provider}")
-        if self.default_llm_provider == "openrouter":
-            logger.info(f"🔑 OpenRouter Model: {self.openrouter_model}")
-            logger.info(f"🔑 OpenRouter Key: {self.openrouter_api_key[:10]}...{self.openrouter_api_key[-4:] if self.openrouter_api_key else 'NOT SET'}")
-        elif self.default_llm_provider == "openai":
-            logger.info(f"🔑 OpenAI Model: {self.openai_model}")
-            logger.info(f"🔑 OpenAI Key: {self.openai_api_key[:10]}...{self.openai_api_key[-4:] if self.openai_api_key else 'NOT SET'}")
-            logger.info(f"🔑 OpenAI Base URL: {self.openai_base_url}")
-        elif self.default_llm_provider == "opencode":
-            logger.info(f"🔑 OpenCode Model: {self.opencode_model or self.openai_model}")
-            logger.info(f"🔑 OpenCode Base URL: {self.opencode_base_url}")
-        else:
-            logger.info(f"🔑 Ollama Model: {self.ollama_model}")
-            logger.info(f"🔑 Ollama URL: {self.ollama_url}")
+        logger.info(f"🤖 LLM Provider 回退顺序: {self.provider_fallback_order}")
+        logger.info(f"🔑 OpenRouter Model: {self.openrouter_model}")
+        logger.info(f"🔑 OpenAI Model: {self.openai_model}")
+        logger.info(f"🔑 OpenAI Base URL: {self.openai_base_url}")
+        logger.info(f"🔑 OpenCode Model: {self.opencode_model or self.openai_model}")
+        logger.info(f"🔑 OpenCode Base URL: {self.opencode_base_url}")
+        logger.info(f"🔑 Ollama Model: {self.ollama_model}")
+        logger.info(f"🔑 Ollama URL: {self.ollama_url}")
         logger.info("=" * 50)
 
 

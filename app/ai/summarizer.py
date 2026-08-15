@@ -421,6 +421,7 @@ class ProjectSummarizer:
         except json.JSONDecodeError as e:
             return {
                 "error": "JSON 解析失败",
+                "parse_failed": True,
                 "raw": content[:500],
                 "message": str(e),
             }
