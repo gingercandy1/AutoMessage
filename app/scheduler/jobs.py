@@ -23,7 +23,6 @@ from app.collectors.huggingface_collector import HuggingFaceCollector
 from app.collectors.huggingface_analyzer import HuggingFaceAnalyzer
 from app.collectors.news.news_collector import NewsCollector
 from app.collectors.news.news_analyzer import NewsAnalyzer
-from app.collectors.news.reddit_collector import RedditCollector
 from app.collectors.news.producthunt_collector import ProductHuntCollector
 from app.collectors.news.official_blog_collector import OfficialBlogCollector
 from app.collectors.hf_papers_collector import HFPapersCollector
@@ -105,7 +104,7 @@ class JobScheduler:
         logger.info("✅ 定时调度器已启动")
 
     async def daily_run(self):
-        await self.daily_collect()
+        # await self.daily_collect()
         await self.daily_process()
 
     async def daily_collect(self):
@@ -114,6 +113,9 @@ class JobScheduler:
         collect_failures = 0
         try:
             for source, collectors in self.collector_dict.items():
+                # if source in ["github", "huggingface", "news", "official_blog", "producthunt", "hf_papers"]:
+                #     continue
+
                 total = 0
                 for collector in collectors:
                     configs = collector.configs()
@@ -153,7 +155,8 @@ class JobScheduler:
                     configs = collector.configs()
                     for config in configs:
                         try:
-                            count = await collector.fetch(config)
+                            result = await collector.fetch(config)
+                            count = len(result) if isinstance(result, (list, tuple)) else (result or 0)
                             total += count
                         except Exception as e:
                             collect_failures += 1

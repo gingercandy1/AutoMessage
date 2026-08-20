@@ -22,7 +22,6 @@ class NewsService:
     SOURCE_LABELS = {
         "hacker_news": "🟠 HN",
         "news": "📰 News",
-        "reddit": "🔴 Reddit",
         "producthunt": "🚀 Product Hunt",
         "official_blog": "🏢 官方博客",
         "hf_papers": "📄 HF Papers",

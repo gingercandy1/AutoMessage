@@ -16,10 +16,6 @@ class Settings(BaseSettings):
         default="",
         description="Telegram Bot Token"
     )
-    telegram_channel_id: int = Field(
-        default=0,
-        description="Telegram Channel ID"
-    )
     review_chat_id: int = Field(
         default=0,
         description="审查群组 Chat ID（AI 摘要先推到这里人工审查，Q4）"
@@ -112,7 +108,19 @@ class Settings(BaseSettings):
         description="OpenCode model id (defaults to openai_model if empty)"
     )
 
-    provider_fallback_order: list[str] = ["groq", "openrouter", "opencode", "ollama"]
+    openwebui_model:str = Field(
+        default="",
+        description="Openwebui model id"
+    )
+    openwebui_api_key:str = Field(
+        default="",
+        description="Openwebui model key"
+    )
+    openwebui_api_url:str = Field(
+        default="",
+        description="Openwebui model url"
+    )
+    provider_fallback_order: list[str] = ["agent", "ollama"]
 
     # ============ News ============
     news_hn_min_score: int = Field(
@@ -124,7 +132,7 @@ class Settings(BaseSettings):
         description="Comma-separated keywords for HN filtering"
     )
     news_rss_feeds: str = Field(
-        default="https://hn.algolia.com/api/v1/search_by_date?tags=story&query=AI,https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/ai-artificial-intelligence/rss/index.xml,https://export.arxiv.org/rss/cs.AI,https://export.arxiv.org/rss/cs.LG,https://export.arxiv.org/rss/cs.CL",
+        default="https://hnrss.org/newest,https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://rss.arxiv.org/rss/cs",
         description="Comma-separated RSS feed URLs"
     )
     news_collection_limit: int = Field(
@@ -137,14 +145,6 @@ class Settings(BaseSettings):
     )
 
     # ---- 新新闻源（T02-T05） ----
-    reddit_subreddits: str = Field(
-        default="LocalLLaMA,singularity,OpenAI,artificial",
-        description="Comma-separated Reddit subreddits to collect (T02)"
-    )
-    reddit_min_score: int = Field(
-        default=50,
-        description="Minimum Reddit post score to collect (T02)"
-    )
     product_hunt_token: str = Field(
         default="",
         description="Product Hunt GraphQL developer token (T03). Empty -> source skipped."

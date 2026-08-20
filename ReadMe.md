@@ -88,16 +88,6 @@ UPDATE projects SET status = 'done' WHERE id = 1;
 
 ### 完善需求
 * 完善功能
-  * github爬取项目 
-      * 支持按不同维度筛选：Today / This Week / This Month
-      * 语言筛选（Python、JavaScript、Go、Rust 等）
-      * 领域筛选（AI、Web、区块链、DevTools、游戏等）
-  * huggingface爬取项目
-      * 完善添加获取项目，添加telegram的获取的方法 
-  * 完善添加订阅功能，定期推送最新的消息
-  * 完善添加频道
-  * 
+  * 完善频道推送功能
 
-* 定时启动程序
-* 添加付费功能
 

@@ -13,7 +13,7 @@ class BaseCollector(ABC):
             cls.COLLECTOR_DICT[cls.NAME] = [cls()]
 
     @abstractmethod
-    async def fetch(self, *args, **kwargs) -> list[dict[str, Any]]:
+    async def fetch(self, *args, **kwargs) -> int:
         raise NotImplementedError
 
     @abstractmethod

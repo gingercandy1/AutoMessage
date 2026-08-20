@@ -3,6 +3,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
+from sqlalchemy.dialects.postgresql import insert
 
 from app.api.hackernews_client import HackerNewsClient
 from app.api.rss_client import RSSClient, RSSFeedEntry
@@ -14,7 +15,8 @@ from app.collectors.news.news_base import (
     categorize_news as _categorize_news_impl,
 )
 from app.config import settings
-from app.database.models import ContentItem
+from app.database import SessionLocal
+from app.database.models import ContentItem, MetricSnapshot
 from app.logger import AppLogger
 
 logger = AppLogger.get(__name__)
@@ -146,7 +148,7 @@ class NewsCollector(BaseCollector):
             return []
         
         # 批量获取详情
-        items = await self.hn_client.get_items_batch(story_ids[:200], max_concurrent=20)
+        items = await self.hn_client.get_items_batch(story_ids, max_concurrent=20)
         
         normalized = []
         for item in items:
@@ -241,7 +243,7 @@ class NewsCollector(BaseCollector):
 
         await asyncio.gather(*[_enrich_one(it) for it in items])
 
-    async def fetch(self, config: NewsConfig) -> list[dict[str, Any]]:
+    async def fetch(self, config: NewsConfig) -> int:
         """抓取新闻"""
         hn_items = await self._fetch_hn_stories(config)
         rss_items = await self._fetch_rss_feeds(config)
@@ -256,7 +258,7 @@ class NewsCollector(BaseCollector):
         await self._enrich_full_text(all_items)
 
         await self.save(all_items)
-        return all_items
+        return len(all_items)
 
     async def save(self, records: List[Dict[str, Any]]) -> None:
         """保存到数据库"""

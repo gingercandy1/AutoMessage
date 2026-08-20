@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 
 from app.collectors.base import BaseCollector
 from app.config import settings
@@ -277,17 +278,16 @@ class LLMLeaderboardCollector(BaseCollector):
         return []
 
     @staticmethod
-    def _extract_any_entries(html: str) -> List[Dict[str, Any]]:
-        """兜底：在 HTML 中直接找 'entries':[{...}] 提取。"""
-        idx = html.find('"entries":[')
-        if idx < 0:
-            return []
-        arr_start = html.find("[", idx)
+    @staticmethod
+    def _match_bracketed(text: str, start: int) -> str:
+        """从 text[start]（必须是 '[' 或 '{'）开始，做括号匹配，返回完整片段。失败返回 ''。"""
+        if start < 0 or start >= len(text) or text[start] not in ("[", "{"):
+            return ""
         depth = 0
         in_str = False
         esc = False
-        for i in range(arr_start, len(html)):
-            ch = html[i]
+        for i in range(start, len(text)):
+            ch = text[i]
             if in_str:
                 if esc:
                     esc = False
@@ -298,15 +298,39 @@ class LLMLeaderboardCollector(BaseCollector):
                 continue
             if ch == '"':
                 in_str = True
-            elif ch == "[":
+            elif ch in "[{":
                 depth += 1
-            elif ch == "]":
+            elif ch in "]}":
                 depth -= 1
                 if depth == 0:
-                    try:
-                        return json.loads(html[arr_start : i + 1])
-                    except (json.JSONDecodeError, TypeError):
-                        return []
+                    return text[start : i + 1]
+        return ""
+
+    @staticmethod
+    def _extract_any_entries(html: str) -> List[Dict[str, Any]]:
+        """兜底：从 HTML 中任意位置提取第一个 list-of-dicts（entries/models/leaderboard/data/rows）。
+
+        修复：① 先 html.unescape（真实页面 JSON 在 HTML 里常被转义）；
+        ② 候选键覆盖 _find_list 的同款键名，而非只认 "entries":[；
+        ③ 找到数组后 json.loads 失败不早退，继续试下一个候选。
+        """
+        import html as _html
+        decoded = _html.unescape(html)
+        for key in ('"entries":[', '"models":[', '"leaderboard":[', '"data":[', '"rows":['):
+            idx = decoded.find(key)
+            if idx < 0:
+                continue
+            arr_start = decoded.find("[", idx)
+            frag = LLMLeaderboardCollector._match_bracketed(decoded, arr_start)
+            if not frag:
+                continue
+            try:
+                parsed = json.loads(frag)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            found = LLMLeaderboardCollector._find_list(parsed)
+            if found:
+                return found
         return []
 
     async def _fetch_openrouter(self) -> List[Dict[str, Any]]:
@@ -388,23 +412,24 @@ class LLMLeaderboardCollector(BaseCollector):
                         return []
         return []
 
-    def _find_list(self, obj: Any) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _find_list(obj: Any) -> List[Dict[str, Any]]:
         """深度优先找第一个 list-of-dicts，作为候选 entries。"""
         if isinstance(obj, list):
             if obj and all(isinstance(x, dict) for x in obj):
                 return obj
             for x in obj:
-                found = self._find_list(x)
+                found = LLMLeaderboardCollector._find_list(x)
                 if found:
                     return found
         elif isinstance(obj, dict):
             for k in ("entries", "models", "leaderboard", "data", "rows"):
                 if k in obj:
-                    found = self._find_list(obj[k])
+                    found = LLMLeaderboardCollector._find_list(obj[k])
                     if found:
                         return found
             for v in obj.values():
-                found = self._find_list(v)
+                found = LLMLeaderboardCollector._find_list(v)
                 if found:
                     return found
         return []
@@ -451,24 +476,31 @@ class LLMLeaderboardCollector(BaseCollector):
         today = now.date()
         try:
             for rec in records:
-                stmt = insert(ContentItem).values(**rec).on_conflict_do_update(
-                    index_elements=["source", "external_id"],
-                    set_={
-                        "title": rec["title"],
-                        "url": rec["url"],
-                        "description": rec["description"],
-                        "metrics": rec["metrics"],
-                        "raw_data": rec["raw_data"],
-                        "discovered_at": rec["discovered_at"],
-                    },
-                )
-                db.execute(stmt)
-
-                # 解析 content_item.id（MetricSnapshot.content_item_id 非空）
-                ci = db.query(ContentItem.id).filter_by(
-                    source=rec["source"], external_id=rec["external_id"]
-                ).first()
-                content_item_id = ci.id if ci else None
+                content_item_id = None
+                try:
+                    stmt = insert(ContentItem).values(**rec).on_conflict_do_update(
+                        index_elements=["source", "external_id"],
+                        set_={
+                            "title": rec["title"],
+                            "url": rec["url"],
+                            "description": rec["description"],
+                            "metrics": rec["metrics"],
+                            "raw_data": rec["raw_data"],
+                            "discovered_at": rec["discovered_at"],
+                        },
+                    )
+                    db.execute(stmt)
+                    ci = db.query(ContentItem.id).filter_by(
+                        source=rec["source"], external_id=rec["external_id"]
+                    ).first()
+                    content_item_id = ci.id if ci else None
+                except IntegrityError:
+                    # 同一官网 URL 被另一平台行占用（leaderboard 多平台常指向同一模型官网）。
+                    # 复用已有行的 id，跳过 ContentItem 新建，仍写入本平台的 MetricSnapshot。
+                    existing = db.query(ContentItem.id).filter_by(url=rec["url"]).first()
+                    content_item_id = existing.id if existing else None
+                    if content_item_id is None:
+                        continue
 
                 # MetricSnapshot（ADR-0002 键：(source, external_id, captured_date)）
                 snap = insert(MetricSnapshot).values(
@@ -513,7 +545,7 @@ class LLMLeaderboardCollector(BaseCollector):
             source="llm_leaderboard", external_id=external_id
         ).update({"processed": 1})
 
-    async def fetch(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def fetch(self, config: Optional[Dict[str, Any]] = None) -> int:
         """采集全部平台并落库。
         config 可选覆盖各平台 payload（测试用）：{"artificial_analysis": {...}, "lmarena": [...]}
         或 {"platforms": ["lmarena", "openrouter"]} 限制平台。
@@ -526,8 +558,8 @@ class LLMLeaderboardCollector(BaseCollector):
             PLATFORM_AA: self._fetch_artificial_analysis,
             PLATFORM_LMARENA: self._fetch_lmarena,
             PLATFORM_OPENROUTER: self._fetch_openrouter,
-            PLATFORM_VELLUM: self._fetch_vellum,
-            PLATFORM_SEAL: self._fetch_seal,
+            # PLATFORM_VELLUM: self._fetch_vellum,
+            # PLATFORM_SEAL: self._fetch_seal,
         }
 
         all_entries = []

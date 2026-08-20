@@ -1,8 +1,3 @@
-"""统一渲染接口（Q11）。
-
-所有源的卡片渲染器继承 BaseProjectRenderer，复用通用的计数格式化与相对时间工具，
-各源实现自己的 card/page/empty（字段不同：GitHub 有 stars/forks，HF 有 likes/downloads）。
-"""
 from datetime import datetime, timezone
 from html import escape
 from typing import Any

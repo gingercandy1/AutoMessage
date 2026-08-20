@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Optional
 import httpx
 import trafilatura
 from rapidfuzz import fuzz
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert, JSONB
+from sqlalchemy import or_, cast
 
 from app.config import settings
 from app.database import SessionLocal
@@ -103,14 +104,7 @@ def categorize_news(title: str, description: str = "", source: str = "news") -> 
 
 
 class NewsDeduplicator:
-    """跨源新闻去重 + 聚类（从 NewsCollector 抽取，供所有新闻采集器复用）。
-
-    两阶段去重（Q10）：
-      1) exact_url：归一化 URL 完全相同 -> 同一簇
-      2) title_similarity：标题 Levenshtein 相似度 >= 0.85 -> 同一簇
-    返回保留项（每簇第一条为 canonical），并把簇信息暂存到 self._last_clusters，
-    供 save 阶段写 NewsCluster。
-    """
+    """跨源新闻去重 + 聚类（从 NewsCollector 抽取，供所有新闻采集器复用）。"""
 
     def __init__(self, enabled: Optional[bool] = None):
         self.enabled = settings.news_dedup_enabled if enabled is None else enabled
@@ -173,50 +167,52 @@ class NewsDeduplicator:
         logger.info(f"🔄 去重+聚类: {len(items)} -> {len(unique)} (簇:{len(self._last_clusters)})")
         return unique
 
-    def write_clusters(self, item_id_by_index: Dict[int, int]):
-        """将本次批次内的簇写入 NewsCluster 表（canonical=簇首）。
-
-        跨运行去重（Q10 v1）：若某个成员已属于既有 NewsCluster，则把本次新成员
-        并入既有簇，不新建重复 canonical。
-        """
+    def write_clusters(self, item_id_by_index: Dict[int, int], db=None) -> None:
         if not self._last_clusters:
             return
-        db = SessionLocal()
+
+        owns_session = db is None
+        db = db or SessionLocal()
         try:
             for grp in self._last_clusters:
                 member_ids = [item_id_by_index[i] for i in grp if i in item_id_by_index]
                 if len(member_ids) < 2:
                     continue
-                existing = (
-                    db.query(NewsCluster)
-                    .filter(NewsCluster.member_item_ids.op("&&")(member_ids))
-                    .first()
-                )
+
+                conditions = [
+                    NewsCluster.member_item_ids.op("@>")(cast([mid], JSONB))
+                    for mid in member_ids
+                ]
+                existing = db.query(NewsCluster).filter(or_(*conditions)).first()
+
                 if existing:
                     merged = list(set((existing.member_item_ids or []) + member_ids))
                     existing.member_item_ids = merged
                     db.add(existing)
                     continue
+
                 db.add(NewsCluster(
                     canonical_item_id=member_ids[0],
                     member_item_ids=member_ids,
                     cluster_method="exact_url|title_similarity",
                 ))
-            db.commit()
+
+            if owns_session:
+                db.commit()
+        except Exception:
+            if owns_session:
+                db.rollback()
+            raise
         finally:
-            db.close()
+            if owns_session:
+                db.close()
 
 
 def save_news_items(
     records: List[Dict[str, Any]],
     deduplicator: Optional[NewsDeduplicator] = None,
 ) -> None:
-    """共享落库：ContentItem upsert + MetricSnapshot + 新闻簇写入。
-
-    records 每个元素需含 source/external_id/title/url/description，可选
-    author/category/published_at/metrics/raw_data。extra metrics 由调用方在
-    item["metrics"] 中预先准备好（含 category/published_at 等基础字段）。
-    """
+    """共享落库：ContentItem upsert + MetricSnapshot + 新闻簇写入。"""
     db = SessionLocal()
     now = datetime.now(timezone.utc)
     today = now.date()
@@ -260,7 +256,7 @@ def save_news_items(
 
             item_id_by_index[index] = content_item.id
 
-            # MetricSnapshot（ADR-0002 键：(source, external_id, captured_date)）
+            # MetricSnapshot
             stmt = insert(MetricSnapshot).values(
                 content_item_id=content_item.id,
                 source=source,
@@ -282,9 +278,12 @@ def save_news_items(
             db.execute(stmt)
 
         if deduplicator:
-            deduplicator.write_clusters(item_id_by_index)
+            deduplicator.write_clusters(item_id_by_index, db)
 
         db.commit()
         logger.info(f"✅ 新闻入库完成: {len(records)} 条")
+
+    except Exception as e:
+        print(e)
     finally:
         db.close()

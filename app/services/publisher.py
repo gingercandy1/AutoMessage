@@ -4,11 +4,14 @@ from datetime import datetime
 from aiogram import Bot
 
 from app.config import settings
-from app.database import SessionLocal
-from app.database.models import Subscription
 from app.logger import AppLogger
 from app.services.github_service import GithubService
 from app.services.huggingface_service import HuggingFaceService
+from app.services.review_service import _render_review_card
+from app.services.news_service import NewsService
+from app.database import SessionLocal
+from app.database.models import NewsCluster
+from app.database.models import Subscription
 
 logger = AppLogger.get(__name__)
 
@@ -137,8 +140,7 @@ class DailyPublisher:
         await asyncio.sleep(0.3)
 
     async def publish_to_channel(self, channel_id: int | None = None):
-        """将已审查通过(approved)的新闻转发到公开频道（ADR-0001/0003 双通道）。
-
+        """将已审查通过(approved)的新闻转发到公开频道。
         仅在人工审查通过后推送；未经审查或拒绝的绝不进频道。
         channel_id 缺省读 settings.public_channel_id。
         """
@@ -146,10 +148,7 @@ class DailyPublisher:
         if not target:
             logger.warning("public_channel_id 未配置，跳过频道发布")
             return 0
-        from app.services.review_service import _render_review_card
-        from app.services.news_service import NewsService
-        from app.database import SessionLocal
-        from app.database.models import NewsCluster
+
         news = NewsService()
         approved = news.get_approved_news(limit=50)
         if not approved:
@@ -170,7 +169,6 @@ class DailyPublisher:
         sent = 0
         for item in approved:
             if item.id in member_to_canonical:
-                # 非 canonical 成员：同簇 canonical 会推送，跳过本重复项
                 logger.info(f"⏩ 跳过重复新闻（同簇 canonical={member_to_canonical[item.id]}）: {item.id}")
                 continue
             try:

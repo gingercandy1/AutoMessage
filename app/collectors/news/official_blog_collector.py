@@ -1,14 +1,7 @@
-"""官方模型发布博客采集器（T04）。
-
-统一爬取 5 家官方发布页（OpenAI/Anthropic/DeepSeek/Mistral/Google AI），
-用 trafilatura 从列表页提取最新文章链接，再抓取全文缓存到 raw_data['full_text']。
-单厂商页面失败降级，不中断其他厂商。
-"""
 import asyncio
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
@@ -121,7 +114,7 @@ class OfficialBlogCollector(BaseCollector):
             "raw_data": {"url": url, "full_text": full_text[:8000]},
         }
 
-    async def fetch(self, config: OfficialBlogConfig = None) -> list[dict[str, Any]]:
+    async def fetch(self, config: OfficialBlogConfig = None) -> int:
         config = config or OfficialBlogConfig()
 
         all_items: List[Dict[str, Any]] = []
@@ -143,7 +136,7 @@ class OfficialBlogCollector(BaseCollector):
 
         await self.save(all_items)
         logger.info(f"✅ 官方博客采集完成: {len(all_items)} 条")
-        return all_items
+        return len(all_items)
 
     async def save(self, records: List[Dict[str, Any]]) -> None:
         """落库（复用共享 save_news_items）。"""

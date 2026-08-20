@@ -134,7 +134,7 @@ class HFPapersCollector(BaseCollector):
                 continue
         return all_entries
 
-    async def fetch(self, config: HFPapersConfig = None) -> list[dict[str, Any]]:
+    async def fetch(self, config: HFPapersConfig = None) -> int:
         config = config or HFPapersConfig()
         self._min_upvotes = config.min_upvotes
 
@@ -154,7 +154,7 @@ class HFPapersCollector(BaseCollector):
 
         await self.save(items)
         logger.info(f"✅ HF Papers 采集完成: {len(items)} 条")
-        return items
+        return len(items)
 
     async def save(self, records: List[Dict[str, Any]]) -> None:
         """落库（复用共享 save_news_items）。"""

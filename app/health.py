@@ -1,8 +1,6 @@
-"""Pipeline health / observability (ADR-0001 §7)."""
 from datetime import datetime, timezone
 from typing import Any, Dict
-
-from sqlalchemy import func, select, case
+from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.database.models import ContentItem, MetricSnapshot, PipelineRun
@@ -11,7 +9,6 @@ from app.logger import AppLogger
 logger = AppLogger.get(__name__)
 
 
-# ContentItem.processed state machine (ADR-0001 §7)
 PROCESSED_UNPROCESSED = 0   # freshly collected, not yet analyzed
 PROCESSED_OK = 1            # analyzed successfully, summary exists
 PROCESSED_ERROR = 2         # analysis/collection failed

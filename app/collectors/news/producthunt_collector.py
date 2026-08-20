@@ -1,10 +1,4 @@
-"""Product Hunt 新闻采集器（T03）。
-
-通过 Product Hunt GraphQL API v2 采集产品发布，以 source="producthunt" 落库。
-product_hunt_token 为空时跳过该源并告警，不阻塞其他源。
-"""
 import asyncio
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -155,7 +149,7 @@ class ProductHuntCollector(BaseCollector):
         posts.sort(key=lambda x: x.get("votes", 0), reverse=True)
         return posts
 
-    async def fetch(self, config: ProductHuntConfig = None) -> list[dict[str, Any]]:
+    async def fetch(self, config: ProductHuntConfig = None) -> int:
         config = config or ProductHuntConfig()
         self._min_votes = config.min_votes
 
@@ -171,7 +165,7 @@ class ProductHuntCollector(BaseCollector):
 
         await self.save(posts)
         logger.info(f"✅ Product Hunt 采集完成: {len(posts)} 条")
-        return posts
+        return len(posts)
 
     async def save(self, records: List[Dict[str, Any]]) -> None:
         """落库（复用共享 save_news_items）。"""
