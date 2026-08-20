@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     )
     review_chat_id: int = Field(
         default=0,
-        description="审查群组 Chat ID（AI 摘要先推到这里人工审查，Q4）"
+        description="审查群组 Chat ID（已弃用：审查改为私聊推送给管理员）"
+    )
+    review_admin_ids: list[int] = Field(
+        default=[],
+        description="审查管理员 telegram_id 白名单（审查卡片私聊推送对象，Q4）"
     )
     public_channel_id: int = Field(
         default=0,

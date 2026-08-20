@@ -83,32 +83,40 @@ class ReviewService:
         self.news = NewsService()
 
     async def send_for_review(self, bot: Bot) -> int:
-        """推送待审查新闻到审查群组。返回成功送审条数。"""
-        if not settings.review_chat_id:
-            logger.warning("review_chat_id 未配置，跳过审查推送")
+        """推送待审查新闻到各审查管理员私聊。返回成功送审条数。"""
+        admin_ids = settings.review_admin_ids
+        if not admin_ids:
+            logger.warning("review_admin_ids 未配置，跳过审查推送")
             return 0
         items = self.news.get_unreviewed_news(limit=50)
         sent = 0
         for item in items:
-            try:
-                await bot.send_message(
-                    settings.review_chat_id,
-                    _render_review_card(item),
-                    parse_mode="HTML",
-                    disable_web_page_preview=False,
-                    reply_markup=_review_keyboard(item.id),
-                )
+            delivered = False
+            for admin_id in admin_ids:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        _render_review_card(item),
+                        parse_mode="HTML",
+                        disable_web_page_preview=False,
+                        reply_markup=_review_keyboard(item.id),
+                    )
+                    delivered = True
+                except Exception as e:
+                    logger.error(f"送审失败 item={item.id} admin={admin_id}: {e}")
+            if delivered:
                 self.news.set_review_status(item.id, "pending")
                 sent += 1
                 await asyncio.sleep(0.2)
-            except Exception as e:
-                logger.error(f"送审失败 item={item.id}: {e}")
-        logger.info(f"🔍 送审 {sent} 条新闻到审查群组")
+        logger.info(f"🔍 送审 {sent} 条新闻到管理员私聊")
         return sent
 
     async def approve(self, bot: Bot, item_id: int, query_message=None) -> bool:
         item = self.news.get_by_id(item_id)
         if not item:
+            return False
+        if item.review_status != "pending":
+            logger.warning(f"拒绝重复通过 item={item_id} status={item.review_status}")
             return False
         if settings.public_channel_id:
             try:
@@ -133,6 +141,12 @@ class ReviewService:
         return True
 
     async def reject(self, bot: Bot, item_id: int, query_message=None) -> bool:
+        item = self.news.get_by_id(item_id)
+        if not item:
+            return False
+        if item.review_status != "pending":
+            logger.warning(f"拒绝重复操作 item={item_id} status={item.review_status}")
+            return False
         ok = self.news.set_review_status(item_id, "rejected")
         if ok and query_message:
             try:
