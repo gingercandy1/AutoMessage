@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
     review_chat_id: int = Field(
         default=0,
-        description="审查群组 Chat ID（已弃用：审查改为私聊推送给管理员）"
+        description="审查频道 Chat ID（待审新闻推送到此频道人工处理，通过后进公开频道；为 0 时退回 review_admin_ids 私聊推送）"
     )
     review_admin_ids: list[int] = Field(
         default=[],

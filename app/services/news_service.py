@@ -161,14 +161,18 @@ class NewsService:
             db.close()
 
     def get_unreviewed_news(self, limit: int = 50) -> List[ContentItem]:
-        """待审查的新闻：AI 已摘要(processed=1) 且尚未送审(review_status IS NULL)。Q4。"""
+        """待审查的新闻：AI 已摘要（存在 Summary 行）且尚未送审(review_status IS NULL)。Q4。
+
+        以 Summary 存在为判定依据，而非 processed 标记——历史上摘要由多条路径
+        写入，processed 可能停留在 0 导致已摘要条目永远进不了审查队列。
+        """
         db: Session = SessionLocal()
         try:
             return db.query(ContentItem) \
                 .options(joinedload(ContentItem.summary)) \
+                .join(Summary, Summary.project_id == ContentItem.id) \
                 .filter(
                     (ContentItem.source.in_(self.news_sources)) &
-                    (ContentItem.processed == 1) &
                     (ContentItem.review_status.is_(None))
                 ) \
                 .order_by(desc(ContentItem.discovered_at)) \

@@ -1,7 +1,8 @@
 """Q4 审查 inline 回调（✅/❌）。
 
-审查卡片私聊推送给白名单管理员（REVIEW_ADMIN_IDS），仅白名单内的
-telegram_id 能操作；非管理员点击会被拒绝并收到提示。
+审查卡片推送到审查频道（REVIEW_CHAT_ID）或私聊推送给白名单管理员
+（REVIEW_ADMIN_IDS，频道模式未配置时的退路）。操作权限始终以
+REVIEW_ADMIN_IDS 白名单为准：非白名单 telegram_id 点击会被拒绝并提示。
 """
 from aiogram import Router, F
 from aiogram.types import CallbackQuery

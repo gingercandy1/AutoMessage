@@ -83,19 +83,26 @@ class ReviewService:
         self.news = NewsService()
 
     async def send_for_review(self, bot: Bot) -> int:
-        """推送待审查新闻到各审查管理员私聊。返回成功送审条数。"""
-        admin_ids = settings.review_admin_ids
-        if not admin_ids:
-            logger.warning("review_admin_ids 未配置，跳过审查推送")
-            return 0
+        """推送待审查新闻。优先推送到审查频道（review_chat_id，bot 需为该频道
+        管理员），未配置时退回各审查管理员私聊（review_admin_ids）。
+        返回成功送审条数。"""
         items = self.news.get_unreviewed_news(limit=50)
+        if settings.review_chat_id:
+            targets = [settings.review_chat_id]
+            dest = f"审查频道 {settings.review_chat_id}"
+        elif settings.review_admin_ids:
+            targets = list(settings.review_admin_ids)
+            dest = "管理员私聊"
+        else:
+            logger.warning("review_chat_id / review_admin_ids 均未配置，跳过审查推送")
+            return 0
         sent = 0
         for item in items:
             delivered = False
-            for admin_id in admin_ids:
+            for target in targets:
                 try:
                     await bot.send_message(
-                        admin_id,
+                        target,
                         _render_review_card(item),
                         parse_mode="HTML",
                         disable_web_page_preview=False,
@@ -103,12 +110,12 @@ class ReviewService:
                     )
                     delivered = True
                 except Exception as e:
-                    logger.error(f"送审失败 item={item.id} admin={admin_id}: {e}")
+                    logger.error(f"送审失败 item={item.id} target={target}: {e}")
             if delivered:
                 self.news.set_review_status(item.id, "pending")
                 sent += 1
                 await asyncio.sleep(0.2)
-        logger.info(f"🔍 送审 {sent} 条新闻到管理员私聊")
+        logger.info(f"🔍 送审 {sent} 条新闻到{dest}")
         return sent
 
     async def approve(self, bot: Bot, item_id: int, query_message=None) -> bool:
