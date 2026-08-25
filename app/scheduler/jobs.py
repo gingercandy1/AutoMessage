@@ -27,6 +27,7 @@ from app.collectors.news.producthunt_collector import ProductHuntCollector
 from app.collectors.news.official_blog_collector import OfficialBlogCollector
 from app.collectors.hf_papers_collector import HFPapersCollector
 from app.collectors.llm_leaderboard_collector import LLMLeaderboardCollector
+from app.collectors.llm_leaderboard_analyzer import LLMLeaderboardAnalyzer  # noqa: F401 必须导入以注册进 ANALYZER_DICT，否则批处理器 analyzer=None
 
 logger = AppLogger.get(__name__)
 
@@ -104,7 +105,7 @@ class JobScheduler:
         logger.info("✅ 定时调度器已启动")
 
     async def daily_run(self):
-        # await self.daily_collect()
+        await self.daily_collect()
         await self.daily_process()
 
     async def daily_collect(self):
@@ -113,9 +114,6 @@ class JobScheduler:
         collect_failures = 0
         try:
             for source, collectors in self.collector_dict.items():
-                # if source in ["github", "huggingface", "news", "official_blog", "producthunt", "hf_papers"]:
-                #     continue
-
                 total = 0
                 for collector in collectors:
                     configs = collector.configs()
@@ -284,7 +282,7 @@ class JobScheduler:
 
 async def start_scheduler():
     job_scheduler = JobScheduler()
-    await job_scheduler.daily_run()
+    await job_scheduler.daily_review()
 
 
 if __name__ == '__main__':

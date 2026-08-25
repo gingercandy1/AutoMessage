@@ -120,7 +120,6 @@ class GitHubCollector(BaseCollector):
         return enriched[: config.max_results]
 
     async def fetch(self, config: GithubConfig) -> int:
-        return 0
         candidates = await self.discover_candidates(config)
         logger.info(f"📋 候选池大小: {len(candidates)}，模式: {config.sort_by}")
 
@@ -281,7 +280,6 @@ class GitHubCollector(BaseCollector):
                     captured_date=now.date(),
                     captured_at=now,
                 ).on_conflict_do_update(
-                    # ADR-0002: one row per (source, external_id, captured_date)
                     index_elements=["source", "external_id", "captured_date"],
                     set_={
                         "content_item_id": content_item.id,

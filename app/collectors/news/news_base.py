@@ -37,9 +37,15 @@ async def fetch_full_text(url: str) -> str:
         return ""
 
 
-#: 所有属于“新闻”的 ContentItem.source 值。新采集器在模块加载时注册进来，
-#: 从而无需改动 NewsService / ReviewService 的过滤逻辑即可接入审查链路。
-NEWS_SOURCES: List[str] = ["hacker_news", "news"]
+#: 所有属于“新闻”的 ContentItem.source 值。显式列出全部新闻族源，
+#: 消除对采集器模块导入顺序的依赖（register_news_source 保留，幂等兼容）。
+NEWS_SOURCES: List[str] = [
+    "hacker_news",
+    "news",
+    "hf_papers",
+    "official_blog",
+    "producthunt",
+]
 
 
 def register_news_source(source: str) -> None:
