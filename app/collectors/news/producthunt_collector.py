@@ -158,7 +158,7 @@ class ProductHuntCollector(BaseCollector):
         except Exception as e:
             # 源级失败降级，不阻塞其他源
             logger.warning(f"⚠️ Product Hunt 采集失败: {e}")
-            return []
+            return 0
 
         posts = self._deduper.deduplicate(posts)
         posts = posts[:config.max_items]

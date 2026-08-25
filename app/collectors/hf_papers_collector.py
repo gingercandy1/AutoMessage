@@ -142,7 +142,7 @@ class HFPapersCollector(BaseCollector):
             entries = await self._fetch_papers(config)
         except Exception as e:
             logger.warning(f"HF Papers 采集失败: {e}")
-            return []
+            return 0
         items: List[Dict[str, Any]] = []
         for entry in entries:
             norm = self._normalize_paper(entry)
