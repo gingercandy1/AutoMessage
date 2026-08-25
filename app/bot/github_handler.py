@@ -44,13 +44,14 @@ class GitHubProjectRenderer(BaseProjectRenderer):
         """
         title = escape(project.title)
         title_link = f'<a href="{project.url}">{title}</a>'
-        language = project.metrics["language"]
+        # JSONB 老数据可能缺键，统一用 .get() 防 KeyError 导致整个列表渲染失败
+        language = project.metrics.get("language")
         lang_label = escape(language) if language else "未分类"
         lang_icon = GitHubProjectRenderer._language_icon(language)
 
-        meta_parts = [f"⭐ <code>{GitHubProjectRenderer._format_count(project.metrics["stars"])}</code>"]
-        if project.metrics["forks"]:
-            meta_parts.append(f"🍴 <code>{GitHubProjectRenderer._format_count(project.metrics["forks"])}</code>")
+        meta_parts = [f"⭐ <code>{GitHubProjectRenderer._format_count(project.metrics.get("stars"))}</code>"]
+        if project.metrics.get("forks"):
+            meta_parts.append(f"🍴 <code>{GitHubProjectRenderer._format_count(project.metrics.get("forks"))}</code>")
         meta_parts.append(f"{lang_icon} {lang_label}")
         if project.author:
             meta_parts.append(f"🧑‍💻 {escape(project.author)}")
@@ -59,20 +60,20 @@ class GitHubProjectRenderer(BaseProjectRenderer):
         # 第二行元信息：license + 更新时间 + 近期活跃度
         sub_meta_parts = []
 
-        license = project.metrics["license"]
+        license = project.metrics.get("license")
         if license:
             license_icon = GitHubProjectRenderer._license_icon(license)
             license_label = escape(license)
             sub_meta_parts.append(f"{license_icon} {license_label}")
 
-        updated_at = project.metrics["updated_at"]
+        updated_at = project.metrics.get("updated_at")
         if isinstance(updated_at, str):
             updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
         updated_label = GitHubProjectRenderer._time_ago(updated_at)
         if updated_label:
             sub_meta_parts.append(f"🕐 {updated_label}更新")
 
-        commits_last_4_weeks = project.metrics["commits_last_4_weeks"]
+        commits_last_4_weeks = project.metrics.get("commits_last_4_weeks")
         if commits_last_4_weeks:
             sub_meta_parts.append(f"📈 近4周 {commits_last_4_weeks} 次提交")
 
@@ -185,32 +186,32 @@ class GitHubKeyboards:
     def get_more_categories_keyboard():
         keyboard = [
             [
-                InlineKeyboardButton(text="💻 C++", callback_data="lang_c++"),
-                InlineKeyboardButton(text="⚙️ C", callback_data="lang_c"),
+                InlineKeyboardButton(text="💻 C++", callback_data="github_lang_c++"),
+                InlineKeyboardButton(text="⚙️ C", callback_data="github_lang_c"),
             ],
             [
-                InlineKeyboardButton(text="🐍 Python", callback_data="lang_python"),
-                InlineKeyboardButton(text="☕ Java", callback_data="lang_java"),
+                InlineKeyboardButton(text="🐍 Python", callback_data="github_lang_python"),
+                InlineKeyboardButton(text="☕ Java", callback_data="github_lang_java"),
             ],
             [
-                InlineKeyboardButton(text="🦀 Rust", callback_data="lang_rust"),
-                InlineKeyboardButton(text="📱 Go", callback_data="lang_go"),
+                InlineKeyboardButton(text="🦀 Rust", callback_data="github_lang_rust"),
+                InlineKeyboardButton(text="📱 Go", callback_data="github_lang_go"),
             ],
             [
-                InlineKeyboardButton(text="📦 JavaScript", callback_data="lang_javascript"),
-                InlineKeyboardButton(text="🔷 TypeScript", callback_data="lang_typescript"),
+                InlineKeyboardButton(text="📦 JavaScript", callback_data="github_lang_javascript"),
+                InlineKeyboardButton(text="🔷 TypeScript", callback_data="github_lang_typescript"),
             ],
             [
-                InlineKeyboardButton(text="💎 C#", callback_data="lang_c#"),
-                InlineKeyboardButton(text="📘 PHP", callback_data="lang_php"),
+                InlineKeyboardButton(text="💎 C#", callback_data="github_lang_c#"),
+                InlineKeyboardButton(text="📘 PHP", callback_data="github_lang_php"),
             ],
             [
-                InlineKeyboardButton(text="🍎 Swift", callback_data="lang_swift"),
-                InlineKeyboardButton(text="🟣 Kotlin", callback_data="lang_kotlin"),
+                InlineKeyboardButton(text="🍎 Swift", callback_data="github_lang_swift"),
+                InlineKeyboardButton(text="🟣 Kotlin", callback_data="github_lang_kotlin"),
             ],
             [
-                InlineKeyboardButton(text="🌐 Web / 前端", callback_data="tag_web"),
-                InlineKeyboardButton(text="🗄️ 数据库", callback_data="tag_database"),
+                InlineKeyboardButton(text="🌐 Web / 前端", callback_data="github_tag_web"),
+                InlineKeyboardButton(text="🗄️ 数据库", callback_data="github_tag_database"),
             ],
             [
                 InlineKeyboardButton(text="🔙 返回菜单", callback_data="back_menu"),
@@ -467,7 +468,7 @@ async def by_language(query: CallbackQuery):
     if not query.data: return
     await query.answer("🔄 加载中...")
     base = query.data.split(":")[0]
-    language = base.split("_", 1)[1]
+    language = base.removeprefix("github_lang_")
     page = _extract_page(query.data)
     await GitHubProjectViews.by_language(language).render(query.message, page=page)
 
@@ -476,7 +477,7 @@ async def by_tag(query: CallbackQuery):
     if not query.data: return
     await query.answer("🔄 加载中...")
     base = query.data.split(":")[0]
-    tag = base.split("_", 1)[1]
+    tag = base.removeprefix("github_tag_")
     page = _extract_page(query.data)
     await GitHubProjectViews.by_tag(tag).render(query.message, page=page)
 
