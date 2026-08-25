@@ -478,25 +478,30 @@ class LLMLeaderboardCollector(BaseCollector):
             for rec in records:
                 content_item_id = None
                 try:
-                    stmt = insert(ContentItem).values(**rec).on_conflict_do_update(
-                        index_elements=["source", "external_id"],
-                        set_={
-                            "title": rec["title"],
-                            "url": rec["url"],
-                            "description": rec["description"],
-                            "metrics": rec["metrics"],
-                            "raw_data": rec["raw_data"],
-                            "discovered_at": rec["discovered_at"],
-                        },
-                    )
-                    db.execute(stmt)
-                    ci = db.query(ContentItem.id).filter_by(
-                        source=rec["source"], external_id=rec["external_id"]
-                    ).first()
-                    content_item_id = ci.id if ci else None
+                    # SAVEPOINT：url 唯一约束冲突时只回滚本条语句，事务不进入
+                    # aborted 状态，恢复查询与后续记录可继续（否则 psycopg2 报
+                    # InFailedSqlTransaction 掩盖真实冲突）。
+                    with db.begin_nested():
+                        stmt = insert(ContentItem).values(**rec).on_conflict_do_update(
+                            index_elements=["source", "external_id"],
+                            set_={
+                                "title": rec["title"],
+                                "url": rec["url"],
+                                "description": rec["description"],
+                                "metrics": rec["metrics"],
+                                "raw_data": rec["raw_data"],
+                                "discovered_at": rec["discovered_at"],
+                            },
+                        )
+                        db.execute(stmt)
+                        ci = db.query(ContentItem.id).filter_by(
+                            source=rec["source"], external_id=rec["external_id"]
+                        ).first()
+                        content_item_id = ci.id if ci else None
                 except IntegrityError:
                     # 同一官网 URL 被另一平台行占用（leaderboard 多平台常指向同一模型官网）。
                     # 复用已有行的 id，跳过 ContentItem 新建，仍写入本平台的 MetricSnapshot。
+                    logger.warning(f"⚠️ ContentItem URL 冲突，复用已有行: {rec['url']}")
                     existing = db.query(ContentItem.id).filter_by(url=rec["url"]).first()
                     content_item_id = existing.id if existing else None
                     if content_item_id is None:
