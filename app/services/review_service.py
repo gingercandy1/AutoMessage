@@ -1,14 +1,16 @@
 import asyncio
 import json
 from html import escape
+from typing import Optional
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
 from app.config import settings
-from app.database.models import ContentItem
+from app.database.models import ContentItem, Summary
 from app.logger import AppLogger
 from app.services.news_service import NewsService
 
@@ -16,6 +18,10 @@ logger = AppLogger.get(__name__)
 
 REVIEW_APPROVE = "review_approve"
 REVIEW_REJECT = "review_reject"
+REVIEW_EDIT = "review_edit"
+
+#: (chat_id, message_id) -> item_id，识别「管理员直接编辑卡片消息」的同步目标
+card_registry: dict[tuple[int, int], int] = {}
 
 
 def _review_keyboard(item_id: int) -> InlineKeyboardMarkup:
@@ -23,8 +29,55 @@ def _review_keyboard(item_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="✅ 通过并推送", callback_data=f"{REVIEW_APPROVE}:{item_id}"),
             InlineKeyboardButton(text="❌ 拒绝", callback_data=f"{REVIEW_REJECT}:{item_id}"),
+            InlineKeyboardButton(text="✏️ 编辑", callback_data=f"{REVIEW_EDIT}:{item_id}"),
         ]
     ])
+
+
+def parse_edit_text(text: str) -> tuple[Optional[str], Optional[str]]:
+    """解析管理员发来的修改稿。
+
+    约定：`一句话` 与 `正文` 用单独一行 `---` 分隔；
+    不带分隔符时视为只修改正文（one_liner 保持不变）。
+    返回 (one_liner | None, summary | None)，两者至少一个非 None。
+    """
+    text = (text or "").strip()
+    if not text:
+        return None, None
+    lines = text.splitlines()
+    sep_idx = next((i for i, l in enumerate(lines) if l.strip() == "---"), -1)
+    if sep_idx > 0:
+        one_liner = "\n".join(lines[:sep_idx]).strip() or None
+        summary = "\n".join(lines[sep_idx + 1:]).strip() or None
+        return one_liner, summary
+    if sep_idx == 0:  # 以 --- 开头：只改正文
+        return None, "\n".join(lines[1:]).strip() or None
+    return None, text
+
+
+def _format_body(text: str) -> str:
+    """正文按段落拆分，每段以 emoji 引导开头，替代全角空格首行缩进。"""
+    paras = [p.strip() for p in text.split("\n") if p.strip()]
+    return "\n\n".join(f"🔹 {p}" for p in paras)
+
+
+def _parse_card_edit(text: str) -> tuple[Optional[str], Optional[str]]:
+    """从编辑后的卡片纯文本反解出 (one_liner, summary)。
+
+    约定：📌 行 = 一句话简介；🔹 段 = 正文段落（按出现顺序拼接）。
+    标题/来源/摘录等行忽略（标题与 URL 以库内记录为准）。
+    """
+    one_liner_parts: list[str] = []
+    body_parts: list[str] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith("📌"):
+            one_liner_parts.append(s[1:].strip())
+        elif s.startswith("🔹"):
+            body_parts.append(s[1:].strip())
+    one_liner = "\n".join(one_liner_parts).strip() or None
+    summary = "\n\n".join(body_parts).strip() or None
+    return one_liner, summary
 
 
 def _render_review_card(item: ContentItem) -> str:
@@ -33,24 +86,36 @@ def _render_review_card(item: ContentItem) -> str:
     title_link = f'<a href="{url}">{title}</a>' if url else title
     src = NewsService().get_source_label(item.source) if item.source else "📰 新闻"
     cat = escape(item.category or "ai")
-    lines = [f"🔍 <b>待审查新闻</b> · {src} · {cat}", "", f"<b>{title_link}</b>"]
+    # Telegram 无 heading，用「加粗标题 + 分隔线」模拟 h2 层级
+    divider = "─" * 14
+    lines = [
+        f"🔍 <b>待审查新闻</b> · {src} · {cat}",
+        "",
+        f"📰 <b>{title_link}</b>",
+        f"<i>{divider}</i>",
+        "",
+    ]
     if item.summary:
         s = item.summary
         if getattr(s, "one_liner", None):
-            lines.append(escape(str(s.one_liner)))
+            lines.append(f"📌 {escape(str(s.one_liner))}")
         if getattr(s, "summary", None):
             body = escape(str(s.summary).strip())
             if len(body) > 400:
                 body = body[:400] + "…"
-            lines.append(body)
-    # 原文摘录（Q3 准确性核对）
+            # 正文与标题区分隔，每段以 emoji 引导
+            lines.append("")
+            lines.append(_format_body(body))
+        # 原文摘录（Q3 准确性核对）
         quotes = getattr(s, "source_quotes", None)
         quote_list = _coerce_quotes(quotes)
         if quote_list:
+            lines.append("")
             for q in quote_list[:2]:
                 lines.append(f"❝ {escape(str(q).strip())}")
         # Q3 闸门：摘要必须有原文摘录支撑，否则向审查员标红
         if not _quote_coverage_ok(str(s.summary or ""), quote_list):
+            lines.append("")
             lines.append("⚠️ <b>准确性待核</b>：摘要无原文摘录支撑，请谨慎通过")
     return "\n".join(lines)
 
@@ -82,6 +147,38 @@ class ReviewService:
     def __init__(self):
         self.news = NewsService()
 
+    def update_summary(self, item_id: int,
+                       one_liner: Optional[str] = None,
+                       summary: Optional[str] = None) -> bool:
+        """管理员修改稿落库：更新该新闻的 Summary（不存在则创建）。"""
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            s = db.query(Summary).filter(Summary.project_id == item_id).first()
+            if not s:
+                s = Summary(
+                    project_id=item_id,
+                    one_liner=one_liner or "",
+                    summary=summary or "",
+                    score=0.0,
+                    model_used="manual_edit",
+                    processing_status="success",
+                )
+                db.add(s)
+            else:
+                if one_liner is not None:
+                    s.one_liner = one_liner
+                if summary is not None:
+                    s.summary = summary
+            db.commit()
+            return True
+        except Exception as e:
+            db.rollback()
+            logger.error(f"更新摘要失败 item={item_id}: {e}")
+            return False
+        finally:
+            db.close()
+
     async def send_for_review(self, bot: Bot) -> int:
         """推送待审查新闻。优先推送到审查频道（review_chat_id，bot 需为该频道
         管理员），未配置时退回各审查管理员私聊（review_admin_ids）。
@@ -101,20 +198,39 @@ class ReviewService:
             delivered = False
             for target in targets:
                 try:
-                    await bot.send_message(
+                    msg = await bot.send_message(
                         target,
                         _render_review_card(item),
                         parse_mode="HTML",
                         disable_web_page_preview=False,
                         reply_markup=_review_keyboard(item.id),
                     )
+                    card_registry[(target, msg.message_id)] = item.id
                     delivered = True
+                except TelegramRetryAfter as e:
+                    logger.warning(
+                        f"触发限流 item={item.id} target={target}，等待 {e.retry_after}s 后重试"
+                    )
+                    await asyncio.sleep(e.retry_after + 1)
+                    try:
+                        msg = await bot.send_message(
+                            target,
+                            _render_review_card(item),
+                            parse_mode="HTML",
+                            disable_web_page_preview=False,
+                            reply_markup=_review_keyboard(item.id),
+                        )
+                        card_registry[(target, msg.message_id)] = item.id
+                        delivered = True
+                    except Exception as e2:
+                        logger.error(f"送审失败 item={item.id} target={target}: {e2}")
                 except Exception as e:
                     logger.error(f"送审失败 item={item.id} target={target}: {e}")
             if delivered:
                 self.news.set_review_status(item.id, "pending")
                 sent += 1
-                await asyncio.sleep(0.2)
+                # 频道/群组限制约 20 条/分钟，间隔放宽到 3s 防止再次触发限流
+                await asyncio.sleep(3)
         logger.info(f"🔍 送审 {sent} 条新闻到{dest}")
         return sent
 
@@ -138,13 +254,20 @@ class ReviewService:
                 return False
         self.news.set_review_status(item_id, "approved")
         if query_message:
+            # 通过即销毁卡片：正式稿已在公开频道，审查卡片不再保留。
             try:
-                await query_message.edit_text(
-                    query_message.text + "\n\n✅ 已通过并推送",
-                    parse_mode="HTML", reply_markup=None,
+                await bot.delete_message(
+                    query_message.chat.id, query_message.message_id
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"删除已通过卡片失败 item={item_id}: {e}，退回标记文本")
+                try:
+                    await query_message.edit_text(
+                        query_message.text + "\n\n✅ 已通过并推送",
+                        parse_mode="HTML", reply_markup=None,
+                    )
+                except Exception:
+                    pass
         return True
 
     async def reject(self, bot: Bot, item_id: int, query_message=None) -> bool:
@@ -156,11 +279,18 @@ class ReviewService:
             return False
         ok = self.news.set_review_status(item_id, "rejected")
         if ok and query_message:
+            # 拒绝即销毁卡片：从审查频道/私聊删除，避免堆积影响查看。
             try:
-                await query_message.edit_text(
-                    query_message.text + "\n\n❌ 已拒绝",
-                    parse_mode="HTML", reply_markup=None,
+                await bot.delete_message(
+                    query_message.chat.id, query_message.message_id
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"删除已拒绝卡片失败 item={item_id}: {e}，退回标记文本")
+                try:
+                    await query_message.edit_text(
+                        query_message.text + "\n\n❌ 已拒绝",
+                        parse_mode="HTML", reply_markup=None,
+                    )
+                except Exception:
+                    pass
         return ok
