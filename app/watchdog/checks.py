@@ -125,7 +125,7 @@ async def check_hf_token() -> CheckResult:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
-                "https://huggingface.co/api/whoami",
+                "https://huggingface.co/api/whoami-v2",
                 headers={"Authorization": f"Bearer {token}"},
             )
         if r.status_code == 200:
