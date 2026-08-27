@@ -136,6 +136,7 @@ class NewsCollector(BaseCollector):
                 "feed_url": entry.feed_url,
                 "content": entry.content,
                 "tags": entry.tags,
+                "image_url": entry.image_url,
             },
         }
 

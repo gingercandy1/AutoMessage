@@ -28,7 +28,6 @@ from app.collectors.news.producthunt_collector import ProductHuntCollector
 from app.collectors.news.official_blog_collector import OfficialBlogCollector
 from app.collectors.hf_papers_collector import HFPapersCollector
 from app.collectors.llm_leaderboard_collector import LLMLeaderboardCollector
-from app.collectors.llm_leaderboard_analyzer import LLMLeaderboardAnalyzer  # noqa: F401 必须导入以注册进 ANALYZER_DICT，否则批处理器 analyzer=None
 
 logger = AppLogger.get(__name__)
 
@@ -47,7 +46,10 @@ class JobScheduler:
         覆盖，避免每个新闻源单独一个 BatchSummary 造成重复摘要或缺失 analyzer。"""
         processors: dict = {}
         for key in self.collector_dict.keys():
-            if key in NEWS_SOURCES:
+            # 新闻族统一走 NewsAnalyzer；llm_leaderboard 是结构化榜单数据本身就是价值，
+            # 不需要 LLM 生成一句话总结（此前分析了但没地方显示，纯浪费 token），
+            # 采集时直接 processed=1（见 llm_leaderboard_collector.py）。
+            if key in NEWS_SOURCES or key == "llm_leaderboard":
                 continue
             processors[key] = BatchSummary(
                 analyzer=self.analyzer_dict.get(key), source=key

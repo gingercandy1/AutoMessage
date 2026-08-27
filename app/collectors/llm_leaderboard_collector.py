@@ -450,6 +450,8 @@ class LLMLeaderboardCollector(BaseCollector):
                 "title": model,
                 "url": url,
                 "description": f"#{e.get('rank')} · {platform} · score={e.get('score')}",
+                # 榜单数据本身就是完整信息，不进 LLM 摘要批处理，采集即完成。
+                "processed": 1,
                 "metrics": {
                     "platform": platform,
                     "rank": e.get("rank"),
@@ -488,6 +490,7 @@ class LLMLeaderboardCollector(BaseCollector):
                                 "title": rec["title"],
                                 "url": rec["url"],
                                 "description": rec["description"],
+                                "processed": rec["processed"],
                                 "metrics": rec["metrics"],
                                 "raw_data": rec["raw_data"],
                                 "discovered_at": rec["discovered_at"],
@@ -535,20 +538,6 @@ class LLMLeaderboardCollector(BaseCollector):
             raise
         finally:
             db.close()
-
-    def _already_summarized(self, db, external_id: str) -> bool:
-        from app.database.models import Summary
-        item = db.query(ContentItem.id).filter_by(
-            source="llm_leaderboard", external_id=external_id
-        ).first()
-        if not item:
-            return False
-        return db.query(Summary).filter(Summary.project_id == item.id).first() is not None
-
-    def _mark_processed(self, db, external_id: str) -> None:
-        db.query(ContentItem).filter_by(
-            source="llm_leaderboard", external_id=external_id
-        ).update({"processed": 1})
 
     async def fetch(self, config: Optional[Dict[str, Any]] = None) -> int:
         """采集全部平台并落库。

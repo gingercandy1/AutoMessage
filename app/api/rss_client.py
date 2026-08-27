@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import re
 import httpx
 import feedparser
 from datetime import datetime, timezone, timedelta
@@ -22,6 +23,7 @@ class RSSFeedEntry:
     feed_url: str
     content: str | None = None
     tags: List[str] | None = None
+    image_url: str | None = None
 
     @property
     def content_hash(self) -> str:
@@ -144,6 +146,8 @@ class RSSClient:
             if entry.get("tags"):
                 tags = [tag.get("term", "") for tag in entry["tags"] if tag.get("term")]
 
+            image_url = self._extract_image_url(entry, content or description)
+
             return RSSFeedEntry(
                 title=title,
                 url=url,
@@ -153,10 +157,35 @@ class RSSClient:
                 feed_url=feed_url,
                 content=content,
                 tags=tags,
+                image_url=image_url,
             )
         except Exception as e:
             logger.warning(f"解析 RSS 条目失败: {e}")
             return None
+
+    @staticmethod
+    def _extract_image_url(entry: feedparser.FeedParserDict, html_fallback: str | None) -> str | None:
+        """从 RSS 条目提取配图：media:content > media:thumbnail > enclosure(image/*) >
+        content/description 里第一个 <img src>。找不到就 None（纯文字卡）。"""
+        for media_field in ("media_content", "media_thumbnail"):
+            media = entry.get(media_field)
+            if media:
+                url = media[0].get("url")
+                if url:
+                    return url
+
+        for enc in entry.get("enclosures", []) or []:
+            enc_type = enc.get("type", "")
+            href = enc.get("href") or enc.get("url")
+            if href and enc_type.startswith("image/"):
+                return href
+
+        if html_fallback:
+            m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html_fallback)
+            if m:
+                return m.group(1)
+
+        return None
 
     async def fetch_feed(
         self,

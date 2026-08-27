@@ -75,6 +75,18 @@ class BaseProjectRenderer:
         return "📄"
 
     @staticmethod
+    def _safe_get_list(summary_obj, field_name: str) -> list:
+        getter_name = f"get_{field_name}_list"
+        getter = getattr(summary_obj, getter_name, None)
+        if callable(getter):
+            try:
+                return getter() or []
+            except Exception:
+                pass
+        raw = getattr(summary_obj, field_name, None)
+        return raw if isinstance(raw, list) else []
+
+    @staticmethod
     def card(item, index: int) -> str:
         raise NotImplementedError
 

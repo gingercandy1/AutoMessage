@@ -91,10 +91,10 @@ class HuggingfaceProjectRenderer(BaseProjectRenderer):
         pipeline_tag = model.metrics["pipeline_tag"]
         icon = HuggingfaceProjectRenderer._pipeline_icon(pipeline_tag)
 
-        meta_parts = [f"👍 <code>{HuggingfaceProjectRenderer._format_count(model.metrics['likes'])}</code>"]
-        downloads = model.metrics["downloads"]
-        if downloads:
-            meta_parts.append(f"⬇️ <code>{HuggingfaceProjectRenderer._format_count(downloads)}</code>")
+        meta_parts = [
+            f"👍 <code>{HuggingfaceProjectRenderer._format_count(model.metrics['likes'])}</code>",
+            f"⬇️ <code>{HuggingfaceProjectRenderer._format_count(model.metrics['downloads'])}</code>",
+        ]
         meta_parts.append(f"{icon} {escape(pipeline_tag) if pipeline_tag else '未分类'}")
         if author:
             meta_parts.append(f"🧑‍💻 {escape(author)}")
@@ -117,6 +117,22 @@ class HuggingfaceProjectRenderer(BaseProjectRenderer):
         header = f"<b>{index}. {title_link}</b>\n{meta_line}{sub_meta_line}"
 
         detail_lines = []
+        if model.summary:
+            s = model.summary
+            if getattr(s, "one_liner", None):
+                detail_lines.append(escape(str(s.one_liner)))
+            pros = HuggingfaceProjectRenderer._safe_get_list(s, "pros")
+            cons = HuggingfaceProjectRenderer._safe_get_list(s, "cons")
+            if pros:
+                detail_lines.append(f"🟢 {escape(str(pros[0]).strip())}")
+            if cons:
+                detail_lines.append(f"🟠 {escape(str(cons[0]).strip())}")
+        elif model.description:
+            desc_text = escape(model.description.strip())
+            if len(desc_text) > 200:
+                desc_text = desc_text[:200] + "…"
+            detail_lines.append(desc_text)
+
         tags = [t for t in (model.metrics["tags"] or []) if isinstance(t, str)][:6]
         if tags:
             tag_str = " ".join(f"<code>#{escape(t.replace(' ', '_'))}</code>" for t in tags)

@@ -80,10 +80,32 @@ def _parse_card_edit(text: str) -> tuple[Optional[str], Optional[str]]:
     return one_liner, summary
 
 
+TELEGRAM_CAPTION_LIMIT = 1024
+
+
+async def _send_public_card(bot: Bot, chat_id: int, item: ContentItem) -> None:
+    """推公开频道：有配图且卡片文字能塞进 caption(1024字符) 就发大图卡片，
+    否则退回纯文字（避免截断破坏 HTML 标签）。图片抓取自第三方 URL，
+    不保证一直可用，send_photo 失败一律退回文字消息。"""
+    text = _render_review_card(item, for_review=False)
+    image_url = (item.raw_data or {}).get("image_url") if item.raw_data else None
+
+    if image_url and len(text) <= TELEGRAM_CAPTION_LIMIT:
+        try:
+            await bot.send_photo(chat_id, photo=image_url, caption=text, parse_mode="HTML")
+            return
+        except Exception as e:
+            logger.warning(f"配图推送失败，退回纯文字 item={item.id}: {e}")
+
+    await bot.send_message(
+        chat_id, text, parse_mode="HTML", disable_web_page_preview=False,
+    )
+
+
 def _render_review_card(item: ContentItem, for_review: bool = True) -> str:
     title = escape(item.title or "")
     url = item.url or ""
-    title_link = f'<a href="{url}">{title}</a>' if url else title
+    title_link = f'<a href="{escape(url)}">{title}</a>' if url else title
     src = NewsService().get_source_label(item.source) if item.source else "📰 新闻"
     cat = escape(item.category or "ai")
     # Telegram 无 heading，用「加粗标题 + 分隔线」模拟 h2 层级
@@ -247,12 +269,7 @@ class ReviewService:
             return False
         if settings.public_channel_id:
             try:
-                await bot.send_message(
-                    settings.public_channel_id,
-                    _render_review_card(item, for_review=False),
-                    parse_mode="HTML",
-                    disable_web_page_preview=False,
-                )
+                await _send_public_card(bot, settings.public_channel_id, item)
             except Exception as e:
                 logger.error(f"转发公开频道失败 item={item_id}: {e}")
                 return False

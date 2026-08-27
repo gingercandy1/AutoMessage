@@ -35,6 +35,9 @@ query GetPosts($first: Int!) {
         commentsCount
         createdAt
         description
+        thumbnail {
+          url
+        }
       }
     }
   }
@@ -93,6 +96,7 @@ class ProductHuntCollector(BaseCollector):
                 published_at = None
 
         external_id = f"ph_{node.get('id')}"
+        image_url = (node.get("thumbnail") or {}).get("url")
         return {
             "source": "producthunt",
             "external_id": external_id,
@@ -111,6 +115,7 @@ class ProductHuntCollector(BaseCollector):
                 "votesCount": votes,
                 "commentsCount": node.get("commentsCount", 0),
                 "id": node.get("id"),
+                "image_url": image_url,
             },
         }
 
