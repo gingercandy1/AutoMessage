@@ -2,10 +2,11 @@ import asyncio
 import signal
 
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
 
 from app.bot.middlewares import ThrottlingMiddleware, ToolRateLimitMiddleware, EnsureUserMiddleware
 from app.config import settings
+from app.redis_client import get_redis
 from app.bot.core_handlers import BOT_COMMANDS, router as core_router
 from app.bot.github_handler import router as github_router
 from app.bot.huggingface_handler import router as huggingface_router
@@ -30,7 +31,7 @@ class BotManager:
         self.bot = Bot(token=settings.telegram_bot_token)
         await self.bot.set_my_commands(BOT_COMMANDS)
         
-        self.dp = Dispatcher(storage=MemoryStorage())
+        self.dp = Dispatcher(storage=RedisStorage(redis=get_redis()))
         self._shutdown_event = asyncio.Event()
 
         self.dp.include_router(core_router)

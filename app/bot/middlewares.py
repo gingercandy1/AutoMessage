@@ -1,10 +1,9 @@
-import time
-from collections import defaultdict
 from typing import Callable, Dict, Any, Awaitable
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, CallbackQuery, Message
 from app.logger import AppLogger
+from app.redis_client import get_redis
 
 logger = AppLogger.get(__name__)
 
@@ -50,11 +49,12 @@ class EnsureUserMiddleware(BaseMiddleware):
             db.close()
 
 class ThrottlingMiddleware(BaseMiddleware):
-    """ 通用节流：同一用户两次操作间隔小于 min_interval 秒就拦截。"""
+    """ 通用节流：同一用户两次操作间隔小于 min_interval 秒就拦截。
+    用 Redis SET NX PX 做分布式锁，跨实例/重启一致（不再是仅本进程内存态）。"""
 
     def __init__(self, min_interval: float = 0.8):
         self.min_interval = min_interval
-        self._last_action: Dict[int, float] = defaultdict(float)
+        self.redis = get_redis()
         super().__init__()
 
     async def __call__(
@@ -67,25 +67,25 @@ class ThrottlingMiddleware(BaseMiddleware):
         if user is None:
             return await handler(event, data)
 
-        now = time.monotonic()
-        last = self._last_action[user.id]
-        if now - last < self.min_interval:
+        key = f"throttle:{user.id}"
+        allowed = await self.redis.set(key, "1", px=int(self.min_interval * 1000), nx=True)
+        if not allowed:
             if isinstance(event, CallbackQuery):
                 await event.answer("⏳ 操作太快，请稍候", show_alert=False)
-            logger.warning(f"用户 {user.id} 触发通用限流（间隔 {now - last:.2f}s）")
+            logger.warning(f"用户 {user.id} 触发通用限流（间隔 < {self.min_interval}s）")
             return None
 
-        self._last_action[user.id] = now
         return await handler(event, data)
 
 
 class ToolRateLimitMiddleware(BaseMiddleware):
-    """ 针对高成本工具调用的独立限流。"""
+    """ 针对高成本工具调用的独立限流。用 Redis INCR + EXPIRE 做固定窗口计数，
+    跨实例/重启一致（不再是仅本进程内存态）。"""
 
     def __init__(self, max_calls: int = 5, window_seconds: int = 60):
         self.max_calls = max_calls
         self.window_seconds = window_seconds
-        self._calls: Dict[tuple, list] = defaultdict(list)
+        self.redis = get_redis()
         super().__init__()
 
     async def __call__(self, handler, event: TelegramObject, data: Dict[str, Any]) -> Any:
@@ -94,12 +94,12 @@ class ToolRateLimitMiddleware(BaseMiddleware):
 
         user = data.get("event_from_user")
         tool_key = event.data.split("_", 1)[1]
-        key = (user.id, tool_key)
-        now = time.monotonic()
+        key = f"toolrate:{user.id}:{tool_key}"
 
-        # 清理窗口外的记录
-        self._calls[key] = [t for t in self._calls[key] if now - t < self.window_seconds]
-        if len(self._calls[key]) >= self.max_calls:
+        count = await self.redis.incr(key)
+        if count == 1:
+            await self.redis.expire(key, self.window_seconds)
+        if count > self.max_calls:
             await event.answer(
                 f"⏳ 该功能请求过于频繁，请 {self.window_seconds} 秒后再试",
                 show_alert=True
@@ -107,5 +107,4 @@ class ToolRateLimitMiddleware(BaseMiddleware):
             logger.warning(f"用户 {user.id} 触发工具限流: {tool_key}")
             return None
 
-        self._calls[key].append(now)
         return await handler(event, data)

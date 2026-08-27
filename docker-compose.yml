@@ -5,15 +5,15 @@ services:
     image: postgres:17
     container_name: ai_postgres
     environment:
-      POSTGRES_DB: ai_projects
-      POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev123
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB not set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER not set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set in .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dev"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?POSTGRES_USER not set in .env}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,14 +25,14 @@ services:
     image: redis:8
     container_name: ai_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD not set in .env}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:?REDIS_PASSWORD not set in .env}"
     networks:
       - ai_network
 
@@ -42,10 +42,10 @@ services:
     networks:
       - ai_network
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?PGADMIN_DEFAULT_EMAIL not set in .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD not set in .env}
     ports:
-      - "8090:80"
+      - "127.0.0.1:8090:80"
     depends_on:
       - postgres
 

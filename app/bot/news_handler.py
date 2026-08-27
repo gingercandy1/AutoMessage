@@ -68,7 +68,7 @@ class NewsProjectRenderer(BaseProjectRenderer):
     @staticmethod
     def card(item: ContentItem, index: int) -> str:
         title = escape(item.title)
-        title_link = f'<a href="{item.url}">{title}</a>'
+        title_link = f'<a href="{escape(item.url)}">{title}</a>'
         category = item.category or "ai"
         cat_icon = NewsProjectRenderer._category_icon(category)
         cat_label = service.get_category_label(category)

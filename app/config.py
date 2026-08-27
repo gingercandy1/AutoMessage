@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         description="Redis Connection URL"
     )
 
+    health_api_key: str = Field(
+        default="",
+        description="/health /watchdog 接口鉴权 key（X-API-Key 头）；留空则不鉴权（仅限本机调试）"
+    )
+
     # ============ Logging ============
     log_level: str = Field(
         default="INFO",

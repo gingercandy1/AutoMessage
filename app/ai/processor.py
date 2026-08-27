@@ -3,6 +3,7 @@ import json
 
 from sqlalchemy import select
 
+from app.ai.output_guard import sanitize_summary_data
 from app.ai.summarizer import ProjectSummarizer
 from app.collectors.base import BaseAnalyzer
 from app.config import settings
@@ -75,6 +76,7 @@ class BatchSummary:
                 summary_data = await summarizer.summarize(prompt)
 
                 if "error" not in summary_data:
+                    summary_data = sanitize_summary_data(summary_data, item_id=project.id)
                     summary = Summary(
                         project_id=project.id,
                         one_liner=summary_data.get("one_liner", ""),

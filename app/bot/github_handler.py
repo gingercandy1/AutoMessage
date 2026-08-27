@@ -43,7 +43,7 @@ class GitHubProjectRenderer(BaseProjectRenderer):
         生成列表页卡片文字，紧凑展示，适合一条消息里放多个项目
         """
         title = escape(project.title)
-        title_link = f'<a href="{project.url}">{title}</a>'
+        title_link = f'<a href="{escape(project.url)}">{title}</a>'
         # JSONB 老数据可能缺键，统一用 .get() 防 KeyError 导致整个列表渲染失败
         language = project.metrics.get("language")
         lang_label = escape(language) if language else "未分类"
@@ -130,19 +130,6 @@ class GitHubProjectRenderer(BaseProjectRenderer):
 
         body = "\n".join(detail_lines)
         return f"{header}\n<blockquote expandable>{body}</blockquote>"
-
-    @staticmethod
-    def _safe_get_list(summary_obj, field_name: str) -> list | list[Any] | object:
-        getter_name = f"get_{field_name}_list"
-        getter = getattr(summary_obj, getter_name, None)
-        if callable(getter):
-            try:
-                return getter() or []
-            except Exception:
-                pass
-        raw = getattr(summary_obj, field_name, None)
-        return raw if isinstance(raw, list) else []
-
 
     @staticmethod
     def page(projects, all_count: int, page: int, total_pages: int, header: str) -> str:

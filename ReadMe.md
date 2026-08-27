@@ -84,7 +84,7 @@ Provider 按 `provider_fallback_order` 依次尝试，失败自动回退（`Quot
 
 | 时间 | 任务 | 说明 |
 |------|------|------|
-| 08:00 | `daily_run` | 处理流程（采集已停用，见已知问题 #1） |
+| 08:00 | `daily_run` | 采集（`daily_collect`，按 source/config 隔离失败）+ 处理流程 |
 | 09:00 | `daily_push` | 主动推送订阅内容 |
 | 10:00 | `daily_review` | 送审（DM 管理员） |
 | 13:00 | `news_collect` | 午后新闻二次采集（时效性） |
@@ -112,12 +112,11 @@ Provider 按 `provider_fallback_order` 依次尝试，失败自动回退（`Quot
 5. 【低】限流（Throttling/ToolRateLimit）与 FSM 均为内存态（`MemoryStorage`）——仅单实例有效，重启即失。
 
 **工作流问题**
-1. 【高】GitHub 采集实际停用：`GitHubCollector.fetch()` 硬编码 `return 0`（`github_collector.py:122`）；且 `daily_run` 中 `daily_collect()` 被注释（`jobs.py:107`）。当前仅 `news_collect`（13:00）与周排行榜在采集。
-2. 【中】GitHub 仓库改名/转移后 API 返回 301：analyzer 各接口失败并静默降级（数据缺失），且库中 `external_id/url` 不会同步到新名（方案已定：`follow_redirects=True` + `full_name` 规范化，待实施）。
-3. 【中】`send_for_review` 只要任一管理员收到即标 `pending`：个别管理员投递失败后不再重试（其余管理员仍可处理）。
-4. 【中】LLM 摘要失败即标 `processed=2`，无自动重试/退避，需人工干预。
-5. 【低】错误处理不一致：`_get_commits_activity`/`_get_issues_summary` 抛异常，其余 `_get_*` 吞异常返回默认值。
-6. 【低】`_build_context_sections` 直接下标访问 `repo_info.metrics[...]`，缺 key 时整条分析失败。
+1. 【中】GitHub 仓库改名/转移后 API 返回 301：analyzer 各接口失败并静默降级（数据缺失），且库中 `external_id/url` 不会同步到新名（方案已定：`follow_redirects=True` + `full_name` 规范化，待实施）。
+2. 【中】`send_for_review` 只要任一管理员收到即标 `pending`：个别管理员投递失败后不再重试（其余管理员仍可处理）。
+3. 【中】LLM 摘要失败即标 `processed=2`，无自动重试/退避，需人工干预。
+4. 【低】错误处理不一致：`_get_commits_activity`/`_get_issues_summary` 抛异常，其余 `_get_*` 吞异常返回默认值。
+5. 【低】`_build_context_sections` 直接下标访问 `repo_info.metrics[...]`，缺 key 时整条分析失败。
 
 ---
 
