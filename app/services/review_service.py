@@ -80,7 +80,7 @@ def _parse_card_edit(text: str) -> tuple[Optional[str], Optional[str]]:
     return one_liner, summary
 
 
-def _render_review_card(item: ContentItem) -> str:
+def _render_review_card(item: ContentItem, for_review: bool = True) -> str:
     title = escape(item.title or "")
     url = item.url or ""
     title_link = f'<a href="{url}">{title}</a>' if url else title
@@ -88,8 +88,12 @@ def _render_review_card(item: ContentItem) -> str:
     cat = escape(item.category or "ai")
     # Telegram 无 heading，用「加粗标题 + 分隔线」模拟 h2 层级
     divider = "─" * 14
+    if for_review:
+        header = f"🔍 <b>待审查新闻</b> · {src} · {cat}"
+    else:
+        header = f"{src} · {cat}"
     lines = [
-        f"🔍 <b>待审查新闻</b> · {src} · {cat}",
+        header,
         "",
         f"📰 <b>{title_link}</b>",
         f"<i>{divider}</i>",
@@ -113,8 +117,8 @@ def _render_review_card(item: ContentItem) -> str:
             lines.append("")
             for q in quote_list[:2]:
                 lines.append(f"❝ {escape(str(q).strip())}")
-        # Q3 闸门：摘要必须有原文摘录支撑，否则向审查员标红
-        if not _quote_coverage_ok(str(s.summary or ""), quote_list):
+        # Q3 闸门：仅审查卡片标红，正式推送不带警告
+        if for_review and not _quote_coverage_ok(str(s.summary or ""), quote_list):
             lines.append("")
             lines.append("⚠️ <b>准确性待核</b>：摘要无原文摘录支撑，请谨慎通过")
     return "\n".join(lines)
@@ -245,7 +249,7 @@ class ReviewService:
             try:
                 await bot.send_message(
                     settings.public_channel_id,
-                    _render_review_card(item),
+                    _render_review_card(item, for_review=False),
                     parse_mode="HTML",
                     disable_web_page_preview=False,
                 )

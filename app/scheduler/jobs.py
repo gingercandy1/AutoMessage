@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.ai.processor import BatchSummary
 from app.collectors.base import BaseCollector, BaseAnalyzer
@@ -57,49 +58,97 @@ class JobScheduler:
         )
         return processors
 
+    async def _watchdog_tick(self):
+        """看门狗定时自检：按 watchdog_interval_minutes 周期运行，异常则走告警通道。"""
+        if not settings.watchdog_enabled:
+            logger.debug("看门狗已禁用，跳过自检")
+            return
+        try:
+            from app.watchdog.monitor import WatchdogMonitor
+            monitor = WatchdogMonitor()
+            await monitor.run_and_alert()
+        except Exception as e:
+            logger.error(f"看门狗自检异常: {e}", exc_info=True)
+
+    async def _track(self, job_id: str, coro):
+        """包裹任意任务，记录心跳并在失败时可追溯。"""
+        try:
+            from app.watchdog.checks import record_job_heartbeat
+            result = await coro
+            record_job_heartbeat(job_id, "ok")
+            return result
+        except Exception as e:
+            from app.watchdog.checks import record_job_heartbeat
+            record_job_heartbeat(job_id, "failed", str(e)[:300])
+            raise
+
+    # --- 看门狗包裹的调度入口（供 APScheduler 直接调用，避免 lambda 闭包问题） ---
+    async def _daily_collect_tracked(self):
+        await self._track("daily_collect", self.daily_run())
+    async def _news_collect_tracked(self):
+        await self._track("news_collect_afternoon", self.news_collect())
+    async def _daily_push_tracked(self):
+        await self._track("daily_push", self.daily_push())
+    async def _daily_review_tracked(self):
+        await self._track("daily_review", self.daily_review())
+    async def _lightweight_snapshot_tracked(self):
+        await self._track("lightweight_snapshot", self.lightweight_snapshot())
+    async def _weekly_leaderboard_tracked(self):
+        await self._track("weekly_leaderboard", self.weekly_leaderboard())
+
     async def setup(self):
         # 每天 8:00 采集项目
         self.scheduler.add_job(
-            self.daily_run,
+            self._daily_collect_tracked,
             CronTrigger(hour=8, minute=0),
             id="daily_collect",
             name="每日采集项目"
         )
         # T06 每天 13:00 第二次采集新闻类源（时效性）
         self.scheduler.add_job(
-            self.news_collect,
+            self._news_collect_tracked,
             CronTrigger(hour=13, minute=0),
             id="news_collect_afternoon",
             name="午后新闻采集"
         )
         # 每天 9:00 主动推送（ADR-0003 bot push）
         self.scheduler.add_job(
-            self.daily_push,
+            self._daily_push_tracked,
             CronTrigger(hour=9, minute=0),
             id="daily_push",
             name="每日主动推送"
         )
         # 每天 10:00 把已摘要新闻送审查群组（Q4 审查闸门）
         self.scheduler.add_job(
-            self.daily_review,
+            self._daily_review_tracked,
             CronTrigger(hour=10, minute=0),
             id="daily_review",
             name="每日送审"
         )
         # Q9 每 6h 轻量快照：14:00 / 20:00 重新采集 GitHub + HF 指标（不触发 LLM）
         self.scheduler.add_job(
-            self.lightweight_snapshot,
+            self._lightweight_snapshot_tracked,
             CronTrigger(hour="14,20", minute=0),
             id="lightweight_snapshot",
             name="轻量快照(6h)"
         )
         # #07 每周 LLM 排行榜采集（周一 07:30）
         self.scheduler.add_job(
-            self.weekly_leaderboard,
+            self._weekly_leaderboard_tracked,
             CronTrigger(day_of_week="mon", hour=7, minute=30),
             id="weekly_leaderboard",
             name="每周LLM排行榜"
         )
+        # 看门狗：每 watchdog_interval_minutes 分钟自检（可追溯 + 告警通道）
+        if settings.watchdog_enabled:
+            self.scheduler.add_job(
+                self._watchdog_tick,
+                IntervalTrigger(minutes=settings.watchdog_interval_minutes),
+                id="watchdog",
+                name="看门狗自检",
+                next_run_time=datetime.now(timezone.utc),
+            )
+            logger.info(f"🐶 看门狗已启用，间隔 {settings.watchdog_interval_minutes}min，冷却 {settings.watchdog_cooldown_minutes}min")
 
         self.scheduler.start()
         logger.info("✅ 定时调度器已启动")
@@ -282,7 +331,7 @@ class JobScheduler:
 
 async def start_scheduler():
     job_scheduler = JobScheduler()
-    await job_scheduler.daily_review()
+    await job_scheduler.daily_run()
 
 
 if __name__ == '__main__':

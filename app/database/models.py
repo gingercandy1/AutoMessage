@@ -262,3 +262,26 @@ class PipelineRun(Base):
 
     def __repr__(self):
         return f"<PipelineRun(id={self.id}, type={self.run_type}, source={self.source}, collected={self.collected})>"
+
+
+class WatchdogEvent(Base):
+    """看门狗告警事件 — 可追溯、可排查的系统提示持久化。"""
+    __tablename__ = "watchdog_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    check_name = Column(String(80), nullable=False, comment="检查项 code，如 W001_GITHUB_TOKEN")
+    level = Column(String(20), nullable=False, default="warning", comment="ok/warning/critical")
+    message = Column(String(500), nullable=False, comment="人类可读的问题描述")
+    details = Column(JSON, nullable=True, comment="结构化详情：失败项、阈值、原始错误等")
+    suggestion = Column(String(500), nullable=True, comment="修复建议")
+    resolved = Column(Integer, nullable=False, default=0, comment="0=未解决 1=已恢复")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_watchdog_check_created", "check_name", "created_at"),
+        Index("idx_watchdog_level_created", "level", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<WatchdogEvent({self.check_name} {self.level}: {self.message[:30]})>"

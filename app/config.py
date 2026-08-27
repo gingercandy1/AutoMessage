@@ -188,6 +188,32 @@ class Settings(BaseSettings):
         description="Scale AI SEAL leaderboard page URL (T10)"
     )
 
+    # ============ Watchdog / 看门狗 ============
+    watchdog_enabled: bool = Field(
+        default=True,
+        description="是否启用看门狗定时自检"
+    )
+    watchdog_alert_chat_id: int = Field(
+        default=0,
+        description="告警接收 Chat ID（0 则回退到 review_admin_ids / review_chat_id）"
+    )
+    watchdog_interval_minutes: int = Field(
+        default=30,
+        description="看门狗自检间隔（分钟）"
+    )
+    watchdog_cooldown_minutes: int = Field(
+        default=60,
+        description="同一检查项告警冷却（分钟），避免刷屏"
+    )
+    watchdog_pipeline_success_threshold: float = Field(
+        default=80.0,
+        description="管线成功率阈值（低于则告警）"
+    )
+    watchdog_stale_hours: int = Field(
+        default=25,
+        description="快照/运行记录超时阈值（小时），超过则判为 stale"
+    )
+
     class Config:
         # 环境变量前缀
         env_prefix = ""

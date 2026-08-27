@@ -45,6 +45,7 @@ BOT_COMMANDS = [
     BotCommand(command="unsubscribe", description="🔕 取消每日推送"),
     BotCommand(command="help", description="❓ 查看使用帮助"),
     BotCommand(command="status", description="📊 查看采集管线健康状态"),
+    BotCommand(command="watchdog", description="🐶 看门狗自检与告警历史"),
     BotCommand(command="llm_start", description="🤖 查看 LLM 排行榜"),
 ]
 
@@ -156,6 +157,55 @@ async def cmd_status(message: Message):
             f"快照 {last}"
         )
     await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.message(Command("watchdog"))
+async def cmd_watchdog(message: Message):
+    """🐶 看门狗：实时自检 + 可追溯告警历史（支持问题定位）。"""
+    # 仅管理员可触发全量自检，避免被滥用刷爆 GitHub 配额
+    from app.config import settings
+    from app.watchdog.monitor import get_watchdog_status
+    from app.watchdog.alerts import AlertService
+
+    is_admin = not settings.review_admin_ids or message.from_user.id in settings.review_admin_ids
+    if not is_admin:
+        await message.answer("⛔ 仅管理员可执行看门狗自检")
+        return
+
+    await message.answer("🐶 看门狗自检中…（检查 Token/管线/任务新鲜度）")
+    try:
+        status = await get_watchdog_status(force=True)
+        lines = [
+            f"🐶 <b>看门狗报告</b> · {status['checked_at']}",
+            f"结果：✅{status['ok']} 🟡{status['warning']} 🔴{status['critical']} / {status['total']} 项  告警已发 {status.get('alerts_sent',0)} 条",
+            "",
+        ]
+        for r in status["results"]:
+            icon = {"ok": "✅", "warning": "🟡", "critical": "🔴"}.get(r["level"], "❓")
+            lines.append(f"{icon} <b>{r['check']}</b> [{r['level']}]")
+            lines.append(f"  {r['message']}")
+            if r["suggestion"]:
+                lines.append(f"  💡 {r['suggestion']}")
+            if r["level"] != "ok" and r["details"]:
+                detail_preview = ", ".join(f"{k}={str(v)[:60]}" for k, v in list(r["details"].items())[:3])
+                lines.append(f"  🔍 {detail_preview}")
+            lines.append("")
+        # 最近告警历史（可追溯）
+        events = AlertService.recent_events(limit=5)
+        if events:
+            lines.append("<b>最近告警历史：</b>")
+            for e in events:
+                state = "已恢复" if e["resolved"] else "待处理"
+                lines.append(f"• {e['check']} [{e['level']}] {e['message'][:50]}… ({state} {e['created_at'][:16]})")
+        # 分段发送，避免超长
+        text = "\n".join(lines)
+        if len(text) > 3500:
+            for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
+                await message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
+        else:
+            await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        await message.answer(f"看门狗自检失败：{e}")
 
 
 @router.message(Command("help"))
