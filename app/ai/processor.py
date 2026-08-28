@@ -93,23 +93,40 @@ class BatchSummary:
                         token_cost=summary_data.get("token_cost", 0.0)
                     )
                     db.merge(summary)
-                    project.processed = 1
+                    # project 是另一个（已关闭的）session 查出来的，跟当前 db 不是同一个
+                    # session/identity map：直接 `project.processed = 1` 只是改内存属性，
+                    # db.commit() 根本看不到这个改动，永远不会真正落库。用显式 UPDATE 绑定
+                    # 到当前 db session 上才会真正写进去。
+                    self._mark_processed(db, project.id, 1)
                     db.commit()
                     logger.info(f"✅ {project.title}")
                     return {"success": True, "project_id": project.id}
                 else:
                     logger.warning(f"⚠️ {project.title}: {summary_data.get('error')}")
-                    project.processed = 2
+                    self._mark_processed(db, project.id, 2)
                     db.commit()
                     return {"success": False, "error": summary_data.get('error')}
             except Exception as e:
                 logger.error(f"❌ {project.title}: {str(e)}")
-                project.processed = 2
-                db.commit()
+                # 上面任一次 db.commit() 失败都会走到这——这时 session 可能处于
+                # aborted 事务状态，不先 rollback 直接再 commit 会抛
+                # InFailedSqlTransaction，把"标记失败"这个动作本身也搞失败，
+                # 条目就会一直停在 processed=0，被下一轮批处理无限重跑。
+                db.rollback()
+                try:
+                    self._mark_processed(db, project.id, 2)
+                    db.commit()
+                except Exception as mark_err:
+                    logger.error(f"❌ 标记失败状态也失败 {project.title}: {mark_err}")
+                    db.rollback()
                 return {"success": False, "error": str(e)}
             finally:
                 db.close()
                 await asyncio.sleep(0.5)
+
+    @staticmethod
+    def _mark_processed(db, project_id: int, state: int) -> None:
+        db.query(ContentItem).filter(ContentItem.id == project_id).update({"processed": state})
 
 
 if __name__ == '__main__':

@@ -238,6 +238,22 @@ def check_infra_db() -> CheckResult:
     except Exception as e:
         return CheckResult("W005_DB", "critical", f"数据库连接失败：{e}", {"error": str(e)}, "检查 postgres 容器健康：docker ps / docker logs ai_postgres")
 
+async def check_redis() -> CheckResult:
+    """W007: Redis 连通性。FSM 状态 + 限流中间件现在都靠它，是单点依赖，
+    中间件本身对 Redis 故障是 fail-open（放行不限流），所以不会直接炸掉 bot，
+    但会话状态和限流会静默失效，需要能在这里发现。"""
+    try:
+        from app.redis_client import get_redis
+        redis = get_redis()
+        await redis.ping()
+        return CheckResult("W007_REDIS", "ok", "Redis 连接正常", {}, "")
+    except Exception as e:
+        return CheckResult(
+            "W007_REDIS", "critical", f"Redis 连接失败：{e}", {"error": str(e)},
+            "检查 redis 容器健康、REDIS_URL 是否带上了和 REDIS_PASSWORD 一致的密码："
+            "docker ps / docker logs ai_redis；期间 FSM 状态和限流会静默失效（fail-open）",
+        )
+
 def check_snapshot_staleness() -> CheckResult:
     """W006: MetricSnapshot 新鲜度（趋势数据是否在更新）。"""
     db = SessionLocal()
@@ -261,5 +277,6 @@ async def run_all_checks() -> List[CheckResult]:
     results.append(check_pipeline_health())
     results.extend(check_job_freshness())
     results.append(check_infra_db())
+    results.append(await check_redis())
     results.append(check_snapshot_staleness())
     return results

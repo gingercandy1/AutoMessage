@@ -2,6 +2,7 @@ from typing import Callable, Dict, Any, Awaitable
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, CallbackQuery, Message
+from redis.exceptions import RedisError
 from app.logger import AppLogger
 from app.redis_client import get_redis
 
@@ -68,7 +69,14 @@ class ThrottlingMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         key = f"throttle:{user.id}"
-        allowed = await self.redis.set(key, "1", px=int(self.min_interval * 1000), nx=True)
+        try:
+            allowed = await self.redis.set(key, "1", px=int(self.min_interval * 1000), nx=True)
+        except RedisError as e:
+            # Redis 抖动/认证失败时，限流是锦上添花的功能，不该因为它挂了就
+            # 让所有消息都处理不了——fail-open：放行 + 记警告，而不是让异常
+            # 一路冒到 aiogram 的 error middleware（那样等于每条消息都报错）。
+            logger.warning(f"限流 Redis 调用失败，fail-open 放行本次: {e}")
+            return await handler(event, data)
         if not allowed:
             if isinstance(event, CallbackQuery):
                 await event.answer("⏳ 操作太快，请稍候", show_alert=False)
@@ -96,9 +104,13 @@ class ToolRateLimitMiddleware(BaseMiddleware):
         tool_key = event.data.split("_", 1)[1]
         key = f"toolrate:{user.id}:{tool_key}"
 
-        count = await self.redis.incr(key)
-        if count == 1:
-            await self.redis.expire(key, self.window_seconds)
+        try:
+            count = await self.redis.incr(key)
+            if count == 1:
+                await self.redis.expire(key, self.window_seconds)
+        except RedisError as e:
+            logger.warning(f"工具限流 Redis 调用失败，fail-open 放行本次: {e}")
+            return await handler(event, data)
         if count > self.max_calls:
             await event.answer(
                 f"⏳ 该功能请求过于频繁，请 {self.window_seconds} 秒后再试",

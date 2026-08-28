@@ -86,13 +86,13 @@ class JobScheduler:
 
     # --- 看门狗包裹的调度入口（供 APScheduler 直接调用，避免 lambda 闭包问题） ---
     async def _daily_collect_tracked(self):
-        await self._track("daily_collect", self.daily_run())
+        await self._track("daily_collect", self.daily_collect())
+    async def _process_backlog_tracked(self):
+        await self._track("process_backlog", self.daily_process())
     async def _news_collect_tracked(self):
         await self._track("news_collect_afternoon", self.news_collect())
     async def _daily_push_tracked(self):
         await self._track("daily_push", self.daily_push())
-    async def _daily_review_tracked(self):
-        await self._track("daily_review", self.daily_review())
     async def _lightweight_snapshot_tracked(self):
         await self._track("lightweight_snapshot", self.lightweight_snapshot())
     async def _weekly_leaderboard_tracked(self):
@@ -105,6 +105,14 @@ class JobScheduler:
             CronTrigger(hour=8, minute=0),
             id="daily_collect",
             name="每日采集项目"
+        )
+        # 批处理（摘要）每 30 分钟检查一次积压，不再绑死在 08:00 采集后一次性跑完；
+        # 新闻优先处理，处理完立即送审（daily_process 内部实现），不用等其它源。
+        self.scheduler.add_job(
+            self._process_backlog_tracked,
+            IntervalTrigger(minutes=30),
+            id="process_backlog",
+            name="批处理积压(30min)"
         )
         # T06 每天 13:00 第二次采集新闻类源（时效性）
         self.scheduler.add_job(
@@ -120,13 +128,8 @@ class JobScheduler:
             id="daily_push",
             name="每日主动推送"
         )
-        # 每天 10:00 把已摘要新闻送审查群组（Q4 审查闸门）
-        self.scheduler.add_job(
-            self._daily_review_tracked,
-            CronTrigger(hour=10, minute=0),
-            id="daily_review",
-            name="每日送审"
-        )
+        # 送审（Q4 审查闸门）不再单独固定 10:00 跑一次：daily_process 里新闻批
+        # 处理完立即调用 daily_review()，跟着 30 分钟积压检查节奏走，见 process_backlog。
         # Q9 每 6h 轻量快照：14:00 / 20:00 重新采集 GitHub + HF 指标（不触发 LLM）
         self.scheduler.add_job(
             self._lightweight_snapshot_tracked,
@@ -220,24 +223,39 @@ class JobScheduler:
         except Exception as e:
             logger.error(f"❌ 新闻采集调度失败: {e}")
 
+    async def _run_processor(self, key: str) -> dict:
+        try:
+            result = await self.batch_processor_dict[key].process_batch(batch_size=2)
+            logger.info(
+                f"✅ 批处理完成 [{key}]: 成功 {result['success']}, 失败 {result['failed']}"
+            )
+            return result
+        except Exception as e:
+            logger.error(f"❌ 批处理失败 [{key}]: {e}")
+            return {"success": 0, "failed": 1}
+
     async def daily_process(self):
-        logger.info("🌙 启动晚间批处理流程...")
+        """批处理积压（每 30 分钟一次，见 process_backlog job）。新闻优先：
+        新闻批处理完立即调 daily_review() 送审，不等其它源处理完——用户需求：
+        处理和送审要紧接着，不能靠"猜 10:00 前处理完没"。"""
+        logger.info("🔁 启动批处理流程（新闻优先）...")
         run_started = datetime.now(timezone.utc)
         ok_total = 0
         fail_total = 0
         try:
-            for key, batch_processor in self.batch_processor_dict.items():
-                try:
-                    result = await batch_processor.process_batch(batch_size=2)
-                    ok_total += result["success"]
-                    fail_total += result["failed"]
-                    logger.info(
-                        f"✅ 晚间处理完成 [{key}]: "
-                        f"成功 {result['success']}, 失败 {result['failed']}"
-                    )
-                except Exception as e:
-                    fail_total += 1
-                    logger.error(f"❌ 批处理失败 [{key}]: {e}")
+            news_result = await self._run_processor("news")
+            ok_total += news_result["success"]
+            fail_total += news_result["failed"]
+            if news_result["success"]:
+                await self.daily_review()
+
+            for key in self.batch_processor_dict:
+                if key == "news":
+                    continue
+                result = await self._run_processor(key)
+                ok_total += result["success"]
+                fail_total += result["failed"]
+
             record_pipeline_run(
                 run_type="daily", source="process", collected=0,
                 processed_ok=ok_total, processed_failed=fail_total,
@@ -245,7 +263,7 @@ class JobScheduler:
                 started_at=run_started,
             )
         except Exception as e:
-            logger.error(f"❌ 晚间处理调度失败: {e}")
+            logger.error(f"❌ 批处理调度失败: {e}")
 
     async def daily_review(self):
         """Q4 审查闸门：把 AI 已摘要(processed=1)的新闻送审查群组等待人工 ✅/❌。"""
