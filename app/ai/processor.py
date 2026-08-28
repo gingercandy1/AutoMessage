@@ -22,6 +22,9 @@ class BatchSummary:
         self.source = source
 
     def get_unprocessed_projects(self):
+        # TODO(retry): 只选 processed==0，processed==2（失败）永远不会被重新
+        # 捞取——ADR-0001 §7 定的是"退避重试"，这里目前是零重试，是已知缺口，
+        # 未纳入本次改动范围。
         db = SessionLocal()
         try:
             summarized_ids = select(Summary.project_id)

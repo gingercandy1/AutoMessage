@@ -246,8 +246,12 @@ class JobScheduler:
             news_result = await self._run_processor("news")
             ok_total += news_result["success"]
             fail_total += news_result["failed"]
-            if news_result["success"]:
-                await self.daily_review()
+            # 无条件送审，不只在本轮有新成功摘要时才调用：否则如果上一轮
+            # send_for_review 本身推送失败，那批已 processed=1 的新闻要等到
+            # 未来某一轮又恰好有新摘要成功才会被重新送审，可能卡住很久。
+            # send_for_review 内部按 processed=1 查询，没有待审条目时本就是
+            # 一次廉价的空查询，无条件调用成本可忽略。
+            await self.daily_review()
 
             for key in self.batch_processor_dict:
                 if key == "news":
@@ -256,8 +260,13 @@ class JobScheduler:
                 ok_total += result["success"]
                 fail_total += result["failed"]
 
+            # run_type="process"（而非复用 "daily"）：process_backlog 现在每 30
+            # 分钟独立跑一次，如果继续记 "daily"，W004_FRESH_DAILY 会一直被这条
+            # 高频记录刷新，掩盖真正的 08:00 daily_collect 采集任务卡住；同时
+            # watchdog 的 expectations 里本就有独立的 "process" 阈值，之前从未
+            # 有代码写过这个 run_type，导致 W004_FRESH_PROCESS 永远是"暂无记录"。
             record_pipeline_run(
-                run_type="daily", source="process", collected=0,
+                run_type="process", source="process", collected=0,
                 processed_ok=ok_total, processed_failed=fail_total,
                 failed_by_stage={"process": fail_total},
                 started_at=run_started,
