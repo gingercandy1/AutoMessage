@@ -75,6 +75,11 @@ class BaseProjectRenderer:
         return "📄"
 
     @staticmethod
+    def _score_bar(score: float, segments: int = 10) -> str:
+        filled = max(0, min(segments, round(score)))
+        return "▰" * filled + "▱" * (segments - filled)
+
+    @staticmethod
     def _safe_get_list(summary_obj, field_name: str) -> list:
         getter_name = f"get_{field_name}_list"
         getter = getattr(summary_obj, getter_name, None)

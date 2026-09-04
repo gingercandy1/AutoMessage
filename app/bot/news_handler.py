@@ -61,11 +61,6 @@ class NewsProjectRenderer(BaseProjectRenderer):
         return NewsProjectRenderer.SOURCE_ICONS.get(source, "📰")
 
     @staticmethod
-    def _score_bar(score: float, segments: int = 10) -> str:
-        filled = max(0, min(segments, round(score)))
-        return "▰" * filled + "▱" * (segments - filled)
-
-    @staticmethod
     def card(item: ContentItem, index: int) -> str:
         title = escape(item.title)
         title_link = f'<a href="{escape(item.url)}">{title}</a>'

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from html import escape
 from typing import Optional
 
@@ -9,6 +10,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
+from app.bot.renderers.base import BaseProjectRenderer
 from app.config import settings
 from app.database.models import ContentItem, Summary
 from app.logger import AppLogger
@@ -107,42 +109,81 @@ def _render_review_card(item: ContentItem, for_review: bool = True) -> str:
     url = item.url or ""
     title_link = f'<a href="{escape(url)}">{title}</a>' if url else title
     src = NewsService().get_source_label(item.source) if item.source else "📰 新闻"
-    cat = escape(item.category or "ai")
-    # Telegram 无 heading，用「加粗标题 + 分隔线」模拟 h2 层级
-    divider = "─" * 14
+
     if for_review:
+        cat = escape(item.category or "ai")
+        # Telegram 无 heading，用「加粗标题 + 分隔线」模拟 h2 层级
+        divider = "─" * 14
         header = f"🔍 <b>待审查新闻</b> · {src} · {cat}"
-    else:
-        header = f"{src} · {cat}"
-    lines = [
-        header,
-        "",
-        f"📰 <b>{title_link}</b>",
-        f"<i>{divider}</i>",
-        "",
-    ]
+        lines = [
+            header,
+            "",
+            f"📰 <b>{title_link}</b>",
+            f"<i>{divider}</i>",
+            "",
+        ]
+        if item.summary:
+            s = item.summary
+            # 📌 / 🔹 前缀是硬约定：管理员在频道里直接编辑本卡片时，
+            # _parse_card_edit() 靠这两个标记反解出编辑内容，改动这两行的
+            # 格式会破坏「直接编辑卡片」功能（见 review_handler.py）。
+            if getattr(s, "one_liner", None):
+                lines.append(f"📌 {escape(str(s.one_liner))}")
+            if getattr(s, "summary", None):
+                body = escape(str(s.summary).strip())
+                if len(body) > 400:
+                    body = body[:400] + "…"
+                lines.append("")
+                lines.append(_format_body(body))
+        return "\n".join(lines)
+
+    # 公开频道：杂志摘要风。这份不会被反解编辑，不需要 📌/🔹 标记，
+    # 摘要整体放进一个引用块，读起来像文章摘要而不是列表条目。
+    cat_label = escape(NewsService().get_category_label(item.category or "ai"))
+    metrics = item.metrics or {}
+    time_label = None
+    published_at = metrics.get("published_at")
+    if published_at:
+        try:
+            dt = datetime.fromisoformat(str(published_at).replace("Z", "+00:00"))
+            time_label = BaseProjectRenderer._time_ago(dt)
+        except Exception:
+            pass
+    meta_parts = [src, cat_label]
+    if time_label:
+        meta_parts.append(f"🕐 {time_label}")
+    lines = [" · ".join(meta_parts), "", f"<b>{title_link}</b>"]
+
     if item.summary:
         s = item.summary
+        if s.score and s.score > 0:
+            bar = BaseProjectRenderer._score_bar(s.score)
+            score_line = f"{bar} <b>{s.score:.1f}</b>/10"
+            maturity = getattr(s, "maturity_level", None)
+            if maturity:
+                score_line += f" · {escape(str(maturity).strip())}"
+            lines.append("")
+            lines.append(score_line)
+
+        quote_segments = []
         if getattr(s, "one_liner", None):
-            lines.append(f"📌 {escape(str(s.one_liner))}")
+            quote_segments.append(escape(str(s.one_liner).strip()))
         if getattr(s, "summary", None):
             body = escape(str(s.summary).strip())
             if len(body) > 400:
                 body = body[:400] + "…"
-            # 正文与标题区分隔，每段以 emoji 引导
+            quote_segments.append(body)
+        if quote_segments:
+            quote_text = "\n\n".join(quote_segments)
             lines.append("")
-            lines.append(_format_body(body))
-        # 原文摘录（Q3 准确性核对）
-        quotes = getattr(s, "source_quotes", None)
-        quote_list = _coerce_quotes(quotes)
-        if quote_list:
+            lines.append(f"<blockquote>❝ {quote_text} ❞</blockquote>")
+
+        tags = s.get_tags_list()[:3] if hasattr(s, "get_tags_list") else []
+        if tags:
+            tag_str = " ".join(f"#{escape(str(t).replace(' ', '_'))}" for t in tags)
             lines.append("")
-            for q in quote_list[:2]:
-                lines.append(f"❝ {escape(str(q).strip())}")
-        # Q3 闸门：仅审查卡片标红，正式推送不带警告
-        if for_review and not _quote_coverage_ok(str(s.summary or ""), quote_list):
-            lines.append("")
-            lines.append("⚠️ <b>准确性待核</b>：摘要无原文摘录支撑，请谨慎通过")
+            lines.append(f"🏷 {tag_str}")
+
     return "\n".join(lines)
 
 
