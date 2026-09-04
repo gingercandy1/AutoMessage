@@ -31,7 +31,10 @@ class ProjectSummarizer:
         return candidates
 
     async def __aenter__(self):
-        self.client = httpx.AsyncClient(verify=False, timeout=120.0)
+        self.client = httpx.AsyncClient(
+            verify=False,
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -39,7 +42,10 @@ class ProjectSummarizer:
 
     async def _ensure_client(self):
         if self.client is None:
-            self.client = httpx.AsyncClient(verify=False, timeout=120.0)
+            self.client = httpx.AsyncClient(
+            verify=False,
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
 
     async def close(self):
         if self.client is not None:
@@ -107,6 +113,7 @@ class ProjectSummarizer:
         # --- 所有候选都失败 ---
         logger.error(f"❌ 所有候选均失败: {errors_log}")
         return {
+            "provider_down": True,
             "error": "所有 provider/model 候选均不可用",
             "details": errors_log,
         }

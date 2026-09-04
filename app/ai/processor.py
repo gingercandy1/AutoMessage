@@ -21,57 +21,83 @@ class BatchSummary:
         self.analyzer = analyzer
         self.source = source
 
-    def get_unprocessed_projects(self):
-        # TODO(retry): 只选 processed==0，processed==2（失败）永远不会被重新
-        # 捞取——ADR-0001 §7 定的是"退避重试"，这里目前是零重试，是已知缺口，
-        # 未纳入本次改动范围。
+    def get_unprocessed_projects(self, limit: int | None = None):
+        # processed==2（失败）也纳入重新拉取，不再是终态——之前只选
+        # processed==0 导致失败条目永远不会被重新处理。目前是无条件重试，
+        # 没有次数上限/退避（ADR-0001 §7 提到的"退避重试"仍是缺口，是已知
+        # 取舍，不是本次改动范围）：永久性失败的条目会在每轮 process_backlog
+        # 里被无限重试，需要时再补 retry_count/退避。
         db = SessionLocal()
         try:
             summarized_ids = select(Summary.project_id)
             query = (
                 db.query(ContentItem)
-                .filter((ContentItem.processed == 0))
+                .filter(ContentItem.processed.in_([0, 2]))
                 .filter(~ContentItem.id.in_(summarized_ids))
             )
             if isinstance(self.source, (list, tuple, set)):
                 query = query.filter(ContentItem.source.in_(list(self.source)))
             elif self.source:
                 query = query.filter(ContentItem.source == self.source)
+            # 先做 processed==0 的新条目，再回头重试 processed==2 的旧失败，
+            # 否则一批陈年失败条目会把每轮配额吃光，新采集的内容永远排不上。
+            query = query.order_by(ContentItem.processed.asc(), ContentItem.id.desc())
+            if limit:
+                query = query.limit(limit)
             return query.all()
         finally:
             db.close()
 
-    async def process_batch(self, batch_size = 1) -> dict:
-        projects = self.get_unprocessed_projects()
+    async def process_batch(self, batch_size = 1, limit: int | None = None) -> dict:
+        # limit：每轮最多取多少条。不限量时一轮会把整个积压（可能上千条）全部
+        # 排进任务队列，单条最坏要等满 LLM 超时，一轮跑几个小时，30 分钟的
+        # process_backlog 节奏完全失效。
+        limit = limit or settings.batch_process_limit
+        projects = self.get_unprocessed_projects(limit=limit)
         if not projects:
             logger.info("📊 没有待处理项目")
-            return {"total": 0, "success": 0, "failed": 0}
-        logger.info(f"🚀 开始处理 {len(projects)} 个项目")
+            return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+        logger.info(f"🚀 开始处理 {len(projects)} 个项目（上限 {limit}）")
 
         success = 0
         failed = 0
+        skipped = 0
+        # provider 全挂时的熔断：第一条就证明所有候选不可用的话，后面几百条
+        # 只会重复同样的超时，既拖垮这一轮，又把条目全标成 processed=2 污染
+        # 成功率统计。这里一旦探测到就直接跳过剩余条目，等下一轮重试。
+        state = {"provider_down": False}
         semaphore = asyncio.Semaphore(batch_size)
         async with ProjectSummarizer() as summarizer:
             tasks = [
-                self._process_single(summarizer, project, semaphore)
+                self._process_single(summarizer, project, semaphore, state)
                 for project in projects
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, dict) and result.get("success"):
                     success += 1
+                elif isinstance(result, dict) and result.get("skipped"):
+                    skipped += 1
                 else:
                     failed += 1
 
-        logger.info(f"✅ 处理完成: 成功 {success}, 失败 {failed}")
+        if state["provider_down"]:
+            logger.error(f"🛑 所有 LLM provider 候选不可用，本轮熔断：跳过 {skipped} 条，等待下一轮")
+        logger.info(f"✅ 处理完成: 成功 {success}, 失败 {failed}, 跳过 {skipped}")
         return {
             "total": len(projects),
             "success": success,
-            "failed": failed
+            "failed": failed,
+            "skipped": skipped,
         }
 
-    async def _process_single(self, summarizer: ProjectSummarizer, project: ContentItem, semaphore) -> dict:
+    async def _process_single(self, summarizer: ProjectSummarizer, project: ContentItem, semaphore, state: dict | None = None) -> dict:
+        state = state if state is not None else {"provider_down": False}
         async with semaphore:
+            if state.get("provider_down"):
+                # 熔断后剩下的条目保持原状态，不落 processed=2：这是基础设施
+                # 故障，不是条目本身处理失败。
+                return {"success": False, "skipped": True, "project_id": project.id}
             db = SessionLocal()
             try:
                 logger.info(f"⏳ 处理: {project.title}")
@@ -106,6 +132,11 @@ class BatchSummary:
                     return {"success": True, "project_id": project.id}
                 else:
                     logger.warning(f"⚠️ {project.title}: {summary_data.get('error')}")
+                    if summary_data.get("provider_down"):
+                        # 所有 provider 候选都不可用：条目本身没问题，保持原
+                        # processed 状态等下一轮，同时给本轮打上熔断标记。
+                        state["provider_down"] = True
+                        return {"success": False, "skipped": True, "project_id": project.id}
                     self._mark_processed(db, project.id, 2)
                     db.commit()
                     return {"success": False, "error": summary_data.get('error')}

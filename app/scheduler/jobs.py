@@ -112,7 +112,13 @@ class JobScheduler:
             self._process_backlog_tracked,
             IntervalTrigger(minutes=30),
             id="process_backlog",
-            name="批处理积压(30min)"
+            name="批处理积压(30min)",
+            # 单实例 + 合并错过的触发：上一轮没跑完时再叠一轮，会让同一批条目
+            # 被两个协程同时摘要（重复 token、重复 Summary merge），也会把 LLM
+            # 并发翻倍。跑过头就跳过这次，等下一个 30 分钟。
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
         )
         # T06 每天 13:00 第二次采集新闻类源（时效性）
         self.scheduler.add_job(
@@ -360,7 +366,7 @@ class JobScheduler:
 
 async def start_scheduler():
     job_scheduler = JobScheduler()
-    await job_scheduler.daily_run()
+    await job_scheduler._process_backlog_tracked()
 
 
 if __name__ == '__main__':
