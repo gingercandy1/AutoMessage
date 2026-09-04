@@ -141,7 +141,12 @@ class Settings(BaseSettings):
         description="Comma-separated keywords for HN filtering"
     )
     news_rss_feeds: str = Field(
-        default="https://hnrss.org/newest,https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://rss.arxiv.org/rss/cs",
+        # hnrss.org/newest 本身就是 Hacker News 的 RSS 镜像，而 NewsCollector
+        # 同时也用 HackerNewsClient 直接采 HN——两条路径抓到同一条会撞
+        # content_items.url 唯一约束，导致 NewsCollector.save() 那一整批（还没
+        # commit）全部跟着回滚，是过去一段时间 hacker_news/news 一直没有新内容
+        # 入库的直接原因。save() 已经加了按 url 兜底去重，这里再把纯冗余的源去掉。
+        default="https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://simonwillison.net/atom/everything/,https://www.qbitai.com/feed",
         description="Comma-separated RSS feed URLs"
     )
     news_collection_limit: int = Field(
@@ -169,6 +174,10 @@ class Settings(BaseSettings):
     hf_papers_limit: int = Field(
         default=50,
         description="Max HF papers to collect per run (T05)"
+    )
+    hf_papers_min_upvotes: int = Field(
+        default=5,
+        description="论文实用性筛选阈值：HF 社区点赞数达标，或论文本身带 GitHub 仓库/项目页（可直接用），二者满足其一才收录；都不满足则视为纯理论/太专业，丢弃"
     )
 
     # ---- LLM 排行榜真 API（T07-T10） ----
@@ -209,6 +218,10 @@ class Settings(BaseSettings):
     watchdog_cooldown_minutes: int = Field(
         default=60,
         description="同一检查项告警冷却（分钟），避免刷屏"
+    )
+    batch_process_limit: int = Field(
+        default=60,
+        description="每轮批处理最多取多少条待处理条目（防止一轮把整个积压全排进队列）"
     )
     watchdog_pipeline_success_threshold: float = Field(
         default=80.0,

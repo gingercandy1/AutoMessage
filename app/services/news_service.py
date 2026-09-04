@@ -160,7 +160,7 @@ class NewsService:
         finally:
             db.close()
 
-    def get_unreviewed_news(self, limit: int = 50, max_age_days: int = 7) -> List[ContentItem]:
+    def get_unreviewed_news(self, limit: int = 50, max_age_days: int = 14) -> List[ContentItem]:
         """待审查的新闻：AI 已摘要（存在 Summary 行）且尚未送审(review_status IS NULL)。Q4。
 
         以 Summary 存在为判定依据，而非 processed 标记——历史上摘要由多条路径

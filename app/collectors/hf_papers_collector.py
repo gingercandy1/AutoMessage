@@ -74,15 +74,17 @@ class HFPapersCollector(BaseCollector):
                 published_at = None
 
         upvotes = paper.get("upvotes") or 0
-        if upvotes < self._min_upvotes:
+        github_repo = paper.get("githubRepo") or ""
+        project_page = paper.get("projectPage") or ""
+
+        # 实用性筛选：热度达标（社区认可）或带可用代码/项目页（能直接上手）
+        # 满足其一即可；两者都不满足的纯理论论文丢弃，减少"太专业"的内容。
+        if upvotes < self._min_upvotes and not (github_repo or project_page):
             return None
 
         authors = paper.get("authors") or []
         author_names = [a.get("name", "") for a in authors if isinstance(a, dict) and a.get("name")]
         author = ", ".join(author_names[:5]) or None
-
-        github_repo = paper.get("githubRepo") or ""
-        project_page = paper.get("projectPage") or ""
 
         return {
             "source": "hf_papers",
@@ -171,7 +173,7 @@ class HFPapersCollector(BaseCollector):
     def configs(self):
         return [HFPapersConfig(
             limit=settings.hf_papers_limit,
-            min_upvotes=0,
+            min_upvotes=settings.hf_papers_min_upvotes,
             days_back=1,
             max_items=settings.news_collection_limit,
         )]

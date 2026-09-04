@@ -87,23 +87,38 @@ def categorize_news(title: str, description: str = "", source: str = "news") -> 
     text = f"{title} {description}".lower()
 
     # LLM/大模型相关 - 放在最前面，优先匹配
-    if any(kw in text for kw in ["llm", "large language model", "gpt", "claude", "llama", "mistral", "gemini", "fine-tun", "instruct", "chat"]):
+    if any(kw in text for kw in [
+        "llm", "large language model", "gpt", "claude", "llama", "mistral", "gemini",
+        "fine-tun", "instruct", "chat", "大模型", "大语言模型", "微调",
+    ]):
         return "llm"
 
     # 研究论文相关
-    if any(kw in text for kw in ["arxiv", "paper", "research", "study", "benchmark", "evaluation"]):
+    if any(kw in text for kw in [
+        "arxiv", "paper", "research", "study", "benchmark", "evaluation",
+        "论文", "研究", "评测",
+    ]):
         return "research"
 
     # AI 通用
-    if any(kw in text for kw in ["ai", "artificial intelligence", "machine learning", "deep learning", "neural", "transformer", "generative"]):
+    if any(kw in text for kw in [
+        "ai", "artificial intelligence", "machine learning", "deep learning", "neural",
+        "transformer", "generative", "人工智能", "机器学习", "深度学习", "神经网络",
+    ]):
         return "ai"
 
     # 工具/框架
-    if any(kw in text for kw in ["tool", "framework", "library", "sdk", "api", "github", "open source", "release", "launch"]):
+    if any(kw in text for kw in [
+        "tool", "framework", "library", "sdk", "api", "github", "open source", "release", "launch",
+        "工具", "框架", "开源", "发布", "上线",
+    ]):
         return "tools"
 
     # 行业/商业
-    if any(kw in text for kw in ["funding", "investment", "acquisition", "startup", "company", "enterprise", "business", "market"]):
+    if any(kw in text for kw in [
+        "funding", "investment", "acquisition", "startup", "company", "enterprise", "business", "market",
+        "融资", "收购", "创业", "公司", "企业", "商业",
+    ]):
         return "industry"
 
     return "ai"  # 默认分类

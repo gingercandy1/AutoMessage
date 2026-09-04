@@ -54,9 +54,20 @@ class HuggingFaceCollector(BaseCollector):
 
         records = []
         for i, m in enumerate(models, 1):
+            # 过滤无内容可总结的条目：没有 model card 描述、又没有点赞/下载量的
+            # 仓库（个人测试仓库、量化 dump、bittensor 镜像之类）——LLM 面对空
+            # description 只会每次都失败，摘要阶段会把它们永久标记失败且从不
+            # 重试；与其让这类条目堆积在 processed=2 里空耗批次，不如采集时
+            # 就不收。hf_trend（按 lastModified 排序）是这类噪音的主要来源。
+            description = (m.get("description") or "").strip()
+            likes = m.get("likes", 0) or 0
+            downloads = m.get("downloads", 0) or 0
+            if not description and likes == 0 and downloads == 0:
+                continue
+
             # 解析 tags
             parsed_tags = self._parse_tags(m.get("tags", []))
-            
+
             record = {
                 "model_id": m["id"],
                 "category": category_key,

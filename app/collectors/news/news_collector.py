@@ -308,21 +308,32 @@ class NewsCollector(BaseCollector):
                     existing.raw_data = item.get("raw_data")
                     content_item = existing
                 else:
-                    content_item = ContentItem(
-                        source=source,
-                        external_id=external_id,
-                        title=item["title"],
-                        url=item["url"],
-                        description=item["description"],
-                        author=item.get("author"),
-                        category=item.get("category"),
-                        discovered_at=item.get("published_at") or now,
-                        processed=0,
-                        metrics=metrics_data,
-                        raw_data=item.get("raw_data"),
-                    )
-                    db.add(content_item)
-                    db.flush()
+                    # content_items.url 有独立的唯一约束，(source, external_id) 不
+                    # 撞不代表 url 不撞——hnrss.org/newest 本身就是 Hacker News 的镜
+                    # 像，会把 HackerNewsClient 直采到的同一条又以 rss_<md5> 的
+                    # external_id 再收一次，url 相同。撞了 unique 约束会在这个
+                    # db.flush() 抛异常，导致本方法一次没 commit 的整批全部回滚——
+                    # 表现为"新闻采集完成: 0 条"，看着像没抓到东西，其实是抓到了
+                    # 但存不进去。这里先按 url 查一次，撞了就复用已有行，不重复插入。
+                    existing_by_url = db.query(ContentItem).filter_by(url=item["url"]).first()
+                    if existing_by_url:
+                        content_item = existing_by_url
+                    else:
+                        content_item = ContentItem(
+                            source=source,
+                            external_id=external_id,
+                            title=item["title"],
+                            url=item["url"],
+                            description=item["description"],
+                            author=item.get("author"),
+                            category=item.get("category"),
+                            discovered_at=item.get("published_at") or now,
+                            processed=0,
+                            metrics=metrics_data,
+                            raw_data=item.get("raw_data"),
+                        )
+                        db.add(content_item)
+                        db.flush()
 
                 item_id_by_index[index] = content_item.id
                 
