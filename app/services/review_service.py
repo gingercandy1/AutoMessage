@@ -135,6 +135,12 @@ def _render_review_card(item: ContentItem, for_review: bool = True) -> str:
                     body = body[:400] + "…"
                 lines.append("")
                 lines.append(_format_body(body))
+            # Q3 闸门：摘要没有原文摘录支撑时标红提示，仅审查卡片显示，
+            # 正式推送到公开频道的卡片不带这条警告。
+            quote_list = _coerce_quotes(getattr(s, "source_quotes", None))
+            if not _quote_coverage_ok(str(s.summary or ""), quote_list):
+                lines.append("")
+                lines.append("⚠️ <b>准确性待核</b>：摘要无原文摘录支撑，请谨慎通过")
         return "\n".join(lines)
 
     # 公开频道：杂志摘要风。这份不会被反解编辑，不需要 📌/🔹 标记，
