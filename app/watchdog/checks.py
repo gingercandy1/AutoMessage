@@ -63,7 +63,7 @@ async def check_github_token() -> CheckResult:
         return CheckResult(
             check_name="W001_GITHUB_TOKEN",
             level="warning",
-            message="GITHUB_TOKEN 未配置，GitHub 采集将受限（匿名 60/h）",
+            message="GitHub 采集没配访问令牌，速度会很慢",
             details={"configured": False},
             suggestion="在 .env 设置 GITHUB_TOKEN=ghp_xxx 或 github_pat_xxx 后重启 bot",
         )
@@ -83,7 +83,7 @@ async def check_github_token() -> CheckResult:
             return CheckResult(
                 check_name="W001_GITHUB_TOKEN",
                 level="ok",
-                message=f"GitHub Token 有效，剩余配额 {remaining}",
+                message=f"GitHub 采集正常，剩余额度 {remaining}",
                 details={"remaining": remaining, "status": 200},
                 suggestion="",
             )
@@ -91,14 +91,14 @@ async def check_github_token() -> CheckResult:
             return CheckResult(
                 check_name="W001_GITHUB_TOKEN",
                 level="critical",
-                message="GitHub Token 无效（401 Bad credentials）— 采集将全部失败",
+                message="GitHub 访问令牌已失效，GitHub 相关内容会全部采集不到",
                 details={"status": 401, "body": r.text[:300], "token_prefix": token[:12] + "..."},
                 suggestion="Token 已过期/撤销：去 https://github.com/settings/tokens 重新生成并更新 .env 后执行 docker compose up -d --force-recreate bot",
             )
         return CheckResult(
             check_name="W001_GITHUB_TOKEN",
             level="warning",
-            message=f"GitHub Token 检查异常：{r.status_code}",
+            message=f"GitHub 令牌检查异常（状态码 {r.status_code}）",
             details={"status": r.status_code, "body": r.text[:300]},
             suggestion="检查网络或 Token 权限（需 public_repo 读权限）",
         )
@@ -106,7 +106,7 @@ async def check_github_token() -> CheckResult:
         return CheckResult(
             check_name="W001_GITHUB_TOKEN",
             level="warning",
-            message=f"GitHub Token 检查失败：{e}",
+            message="GitHub 令牌检查失败，可能是网络问题",
             details={"error": str(e)},
             suggestion="检查容器网络连通性，或稍后重试",
         )
@@ -118,7 +118,7 @@ async def check_hf_token() -> CheckResult:
         return CheckResult(
             check_name="W002_HF_TOKEN",
             level="warning",
-            message="HUGGING_FACE_TOKEN 未配置，部分私有/限流模型采集可能 401",
+            message="HuggingFace 采集没配访问令牌，部分模型可能采集不到",
             details={"configured": False},
             suggestion="在 .env 设置 HUGGING_FACE_TOKEN=hf_xxx 后重启",
         )
@@ -129,12 +129,12 @@ async def check_hf_token() -> CheckResult:
                 headers={"Authorization": f"Bearer {token}"},
             )
         if r.status_code == 200:
-            return CheckResult("W002_HF_TOKEN", "ok", "HF Token 有效", {"status": 200}, "")
+            return CheckResult("W002_HF_TOKEN", "ok", "HuggingFace 采集正常", {"status": 200}, "")
         if r.status_code == 401:
-            return CheckResult("W002_HF_TOKEN", "critical", "HF Token 无效（401）— 模型采集将大量失败", {"status": 401}, "检查 Token 是否过期，去 https://huggingface.co/settings/tokens 重新生成")
-        return CheckResult("W002_HF_TOKEN", "warning", f"HF Token 检查异常：{r.status_code}", {"status": r.status_code}, "")
+            return CheckResult("W002_HF_TOKEN", "critical", "HuggingFace 访问令牌已失效，模型采集会大量失败", {"status": 401}, "检查 Token 是否过期，去 https://huggingface.co/settings/tokens 重新生成")
+        return CheckResult("W002_HF_TOKEN", "warning", f"HuggingFace 令牌检查异常（状态码 {r.status_code}）", {"status": r.status_code}, "")
     except Exception as e:
-        return CheckResult("W002_HF_TOKEN", "warning", f"HF 检查失败：{e}", {"error": str(e)}, "")
+        return CheckResult("W002_HF_TOKEN", "warning", "HuggingFace 令牌检查失败，可能是网络问题", {"error": str(e)}, "")
 
 def check_pipeline_health() -> CheckResult:
     """W003: 管线成功率 + backlog（基于 health.py 聚合）。"""
@@ -147,10 +147,12 @@ def check_pipeline_health() -> CheckResult:
     unprocessed = sum(s.get("unprocessed", 0) for s in h.get("per_source", {}).values())
     threshold = settings.watchdog_pipeline_success_threshold
     if success < threshold:
+        error_count = sum(s["error"] for s in h["per_source"].values())
         return CheckResult(
             "W003_PIPELINE",
             "warning",
-            f"管线成功率 {success}% 低于阈值 {threshold}%（错误 {sum(s['error'] for s in h['per_source'].values())} 条）",
+            f"最近收集的内容里，只有 {success}% 成功生成了摘要，{error_count} 条失败了——"
+            f"通常是 AI 摘要服务暂时不稳定，或采集到了没法总结的内容",
             {"success_rate": success, "total": total, "unprocessed": unprocessed, "per_source": h["per_source"]},
             "查看 /health 的 per_source 错误分布，或 docker logs ai_project_bot | grep 采集失败",
         )
@@ -158,11 +160,11 @@ def check_pipeline_health() -> CheckResult:
         return CheckResult(
             "W003_PIPELINE",
             "warning",
-            f"未处理积压 {unprocessed} 条（>200），批处理可能卡住",
+            f"有 {unprocessed} 条内容还堆在那没处理，处理速度可能跟不上",
             {"unprocessed": unprocessed, "total": total},
             "检查 daily_process 是否按时执行，或手动触发 BatchSummary",
         )
-    return CheckResult("W003_PIPELINE", "ok", f"管线正常：成功率 {success}% 总条目 {total}", {"success_rate": success, "unprocessed": unprocessed}, "")
+    return CheckResult("W003_PIPELINE", "ok", f"内容处理正常：成功率 {success}%，共 {total} 条", {"success_rate": success, "unprocessed": unprocessed}, "")
 
 def check_job_freshness(heartbeat: Optional[Dict[str, Any]] = None) -> List[CheckResult]:
     """W004: 关键任务是否按时执行（基于 PipelineRun + 心跳）。"""
@@ -170,22 +172,22 @@ def check_job_freshness(heartbeat: Optional[Dict[str, Any]] = None) -> List[Chec
     hb = heartbeat or _job_heartbeat
     db = SessionLocal()
     try:
-        # 期望的 run_type -> 最大允许 stale
+        # 期望的 run_type -> (中文名, 最大允许 stale)
         expectations = {
-            "daily": 25,          # 每天一次
-            "news": 25,
-            "lightweight": 8,     # 6h 一次
-            "process": 25,
+            "daily": ("每日采集", 25),          # 每天一次
+            "news": ("新闻采集", 25),
+            "lightweight": ("轻量快照", 8),     # 6h 一次
+            "process": ("内容处理", 25),
         }
         stale_hours = settings.watchdog_stale_hours
         now = datetime.now(timezone.utc)
-        for run_type, max_stale in expectations.items():
+        for run_type, (label, max_stale) in expectations.items():
             row = db.query(PipelineRun).filter(PipelineRun.run_type == run_type).order_by(PipelineRun.started_at.desc()).first()
             if not row:
                 results.append(CheckResult(
                     f"W004_FRESH_{run_type.upper()}",
                     "warning",
-                    f"类型 {run_type} 暂无 PipelineRun 记录（可能从未执行或表刚迁移）",
+                    f"「{label}」还没有过运行记录，可能是从没成功跑过",
                     {"run_type": run_type},
                     "等待下一次调度，或手动触发对应采集",
                 ))
@@ -198,7 +200,8 @@ def check_job_freshness(heartbeat: Optional[Dict[str, Any]] = None) -> List[Chec
                 results.append(CheckResult(
                     f"W004_FRESH_{run_type.upper()}",
                     level,
-                    f"{run_type} 上次执行 {age_h:.1f}h 前（阈值 {limit}h），可能调度未触发",
+                    f"「{label}」已经 {age_h:.0f} 小时没有成功运行了，本该每隔一段时间自动跑一次，"
+                    f"可能是没被正常触发",
                     {"last_run": row.started_at.isoformat() if row.started_at else None, "age_hours": round(age_h, 1), "failed_by_stage": row.failed_by_stage},
                     f"检查 scheduler 日志 Next wakeup / docker logs ai_project_bot | grep {run_type}；确认容器时区与 Crontab",
                 ))
@@ -206,12 +209,12 @@ def check_job_freshness(heartbeat: Optional[Dict[str, Any]] = None) -> List[Chec
                 results.append(CheckResult(
                     f"W004_FRESH_{run_type.upper()}",
                     "warning",
-                    f"{run_type} 上次执行有失败分段 {row.failed_by_stage}",
+                    f"「{label}」上次运行时有部分内容没采集成功",
                     {"failed_by_stage": row.failed_by_stage, "collected": row.collected},
                     "查看日志 采集失败 [source] 定位具体源的 401/限流",
                 ))
             else:
-                results.append(CheckResult(f"W004_FRESH_{run_type.upper()}", "ok", f"{run_type} 最近 {age_h:.1f}h 前正常执行", {"age_hours": round(age_h, 1)}, ""))
+                results.append(CheckResult(f"W004_FRESH_{run_type.upper()}", "ok", f"「{label}」运行正常，{age_h:.0f} 小时前刚跑过", {"age_hours": round(age_h, 1)}, ""))
 
         # 检查 apscheduler 心跳（若有记录）
         if hb:
@@ -220,7 +223,7 @@ def check_job_freshness(heartbeat: Optional[Dict[str, Any]] = None) -> List[Chec
                     results.append(CheckResult(
                         f"W004_JOB_{job_id}",
                         "critical",
-                        f"任务 {job_id} 上次执行失败：{info.get('error')}",
+                        f"「{job_id}」这个任务上次执行失败了：{info.get('error')}",
                         {"job_id": job_id, "last_run": info.get("last_run").isoformat() if info.get("last_run") else None},
                         "查看日志 ❌ 采集失败 / 批处理失败 栈",
                     ))
@@ -236,7 +239,7 @@ def check_infra_db() -> CheckResult:
         db.close()
         return CheckResult("W005_DB", "ok", "数据库连接正常", {}, "")
     except Exception as e:
-        return CheckResult("W005_DB", "critical", f"数据库连接失败：{e}", {"error": str(e)}, "检查 postgres 容器健康：docker ps / docker logs ai_postgres")
+        return CheckResult("W005_DB", "critical", "数据库连不上了，机器人基本无法正常工作", {"error": str(e)}, "检查 postgres 容器健康：docker ps / docker logs ai_postgres")
 
 async def check_redis() -> CheckResult:
     """W007: Redis 连通性。FSM 状态 + 限流中间件现在都靠它，是单点依赖，
@@ -249,7 +252,9 @@ async def check_redis() -> CheckResult:
         return CheckResult("W007_REDIS", "ok", "Redis 连接正常", {}, "")
     except Exception as e:
         return CheckResult(
-            "W007_REDIS", "critical", f"Redis 连接失败：{e}", {"error": str(e)},
+            "W007_REDIS", "critical",
+            "Redis 连不上了，用户的登录状态和防刷限制会暂时失效（其他功能不受影响）",
+            {"error": str(e)},
             "检查 redis 容器健康、REDIS_URL 是否带上了和 REDIS_PASSWORD 一致的密码："
             "docker ps / docker logs ai_redis；期间 FSM 状态和限流会静默失效（fail-open）",
         )
@@ -261,11 +266,11 @@ def check_snapshot_staleness() -> CheckResult:
         from sqlalchemy import func
         row = db.query(func.max(MetricSnapshot.captured_at)).scalar()
         if not row:
-            return CheckResult("W006_SNAPSHOT", "warning", "暂无 MetricSnapshot（采集可能从未成功）", {}, "触发一次 daily_run 验证")
+            return CheckResult("W006_SNAPSHOT", "warning", "还没有采集到任何数据", {}, "触发一次 daily_run 验证")
         age_h = (datetime.now(timezone.utc) - row).total_seconds() / 3600
         if age_h > settings.watchdog_stale_hours:
-            return CheckResult("W006_SNAPSHOT", "warning", f"最新快照 {age_h:.1f}h 前，超过 {settings.watchdog_stale_hours}h 阈值", {"last_snapshot": row.isoformat(), "age_hours": round(age_h, 1)}, "检查轻量快照/每日采集是否按时执行")
-        return CheckResult("W006_SNAPSHOT", "ok", f"快照新鲜：{age_h:.1f}h 前", {"age_hours": round(age_h, 1)}, "")
+            return CheckResult("W006_SNAPSHOT", "warning", f"数据已经 {age_h:.0f} 小时没更新了，趋势数据可能停止刷新了", {"last_snapshot": row.isoformat(), "age_hours": round(age_h, 1)}, "检查轻量快照/每日采集是否按时执行")
+        return CheckResult("W006_SNAPSHOT", "ok", f"数据更新正常，{age_h:.0f} 小时前刚更新过", {"age_hours": round(age_h, 1)}, "")
     finally:
         db.close()
 

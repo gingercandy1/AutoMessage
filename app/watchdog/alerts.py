@@ -68,28 +68,30 @@ def _persist_event(r: CheckResult):
         db.close()
 
 def _format_telegram(results: List[CheckResult]) -> str:
-    """生成可排查的告警卡片：每项带 code、级别、详情、建议。"""
+    """生成告警卡片：说清楚"出了什么问题、要不要紧、怎么处理"，不堆技术
+    术语和原始数据——那些留给 /watchdog 和日志，推送只给看得懂的结论。"""
     bad = [r for r in results if r.level != "ok"]
     if not bad:
         return ""
+    critical_n = sum(1 for r in bad if r.level == "critical")
+    warning_n = len(bad) - critical_n
+    parts = []
+    if critical_n:
+        parts.append(f"{critical_n} 个严重")
+    if warning_n:
+        parts.append(f"{warning_n} 个提醒")
     lines = [
-        f"🚨 <b>系统看门狗告警</b> · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        f"命中 {len(bad)}/{len(results)} 项，级别统计："
-        + ", ".join(f"{lvl}={sum(1 for r in bad if r.level==lvl)}" for lvl in ["critical","warning"] if any(r.level==lvl for r in bad)),
+        f"🚨 <b>系统检查提醒</b> · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"发现 " + "、".join(parts),
         "",
     ]
-    for r in bad:
+    for r in sorted(bad, key=lambda x: x.level != "critical"):
         icon = "🔴" if r.level == "critical" else "🟡"
-        lines.append(f"{icon} <b>{r.check_name}</b> [{r.level}]")
-        lines.append(f"  问题：{r.message}")
-        if r.details:
-            # 截断详情，避免过长
-            detail_str = ", ".join(f"{k}={str(v)[:80]}" for k, v in list(r.details.items())[:4])
-            lines.append(f"  详情：{detail_str}")
+        lines.append(f"{icon} {r.message}")
         if r.suggestion:
-            lines.append(f"  建议：{r.suggestion}")
+            lines.append(f"  怎么办：{r.suggestion}")
         lines.append("")
-    lines.append("排查：<code>/watchdog</code> 查看详情，或 <code>docker logs ai_project_bot --tail 100 | grep 看门狗</code>")
+    lines.append("完整详情：<code>/watchdog</code>")
     return "\n".join(lines).strip()
 
 class AlertService:
