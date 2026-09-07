@@ -232,6 +232,38 @@ class Settings(BaseSettings):
         description="快照/运行记录超时阈值（小时），超过则判为 stale"
     )
 
+    # ============ Scheduler / 开机补跑 ============
+    scheduler_timezone: str = Field(
+        # 默认按中文用户/中文内容源（量子位等）设为北京时间，且没有夏令时漂移；
+        # 如果实际审查/使用的人在别的时区，在 .env 里覆盖 SCHEDULER_TIMEZONE 即可。
+        default="Asia/Shanghai",
+        description="调度时区（IANA 名）。容器内 TZ 为空跑在 UTC，不显式指定的话 "
+                    "CronTrigger(hour=8) 会变成本地 9/10 点（还随夏令时飘）；"
+                    "补跑判定「今天」也以这个时区为准"
+    )
+    catchup_enabled: bool = Field(
+        default=True,
+        description="是否启用开机补跑（机器关机错过 cron 时，开机后补上当天任务）"
+    )
+    catchup_interval_minutes: int = Field(
+        default=30,
+        description="补跑自检间隔（分钟）。启动时会立即先跑一次"
+    )
+    catchup_grace_minutes: int = Field(
+        default=20,
+        description="计划时刻后的宽限期（分钟）。机器开着时正常 cron 正在跑，"
+                    "宽限期内不补跑，避免和它撞成两份"
+    )
+    catchup_max_attempts: int = Field(
+        default=3,
+        description="同一周期内最多尝试几次（含正常 cron 那次）。达上限后不再重试，"
+                    "交给看门狗告警——避免永久性故障被无限重跑"
+    )
+    catchup_retry_backoff_minutes: int = Field(
+        default=60,
+        description="上一次尝试失败后，隔多久才允许补跑重试（分钟）"
+    )
+
     class Config:
         # 环境变量前缀
         env_prefix = ""

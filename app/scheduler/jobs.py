@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -11,7 +12,7 @@ from app.collectors.base import BaseCollector, BaseAnalyzer
 from app.collectors.news.news_base import NEWS_SOURCES
 from app.config import settings
 from app.database import SessionLocal
-from app.database.models import Subscription
+from app.database.models import PipelineRun, Subscription
 from app.health import record_pipeline_run
 from app.logger import AppLogger
 from app.services.publisher import DailyPublisher
@@ -35,11 +36,23 @@ logger = AppLogger.get(__name__)
 class JobScheduler:
     """任务调度器"""
 
+    # 补跑覆盖的 cron 任务：run_type 对应 PipelineRun.run_type，hours 是这个
+    # 任务每天该跑的整点（scheduler_timezone 下）。daily_push 不在这里——
+    # 推送给用户的东西补跑晚了没意义，见 _catchup_tick 的说明。
+    CATCHUP_JOBS = [
+        {"run_type": "daily", "hours": [8], "runner": "daily_collect"},
+        {"run_type": "news", "hours": [13], "runner": "news_collect"},
+        {"run_type": "lightweight", "hours": [14, 20], "runner": "lightweight_snapshot"},
+    ]
+
     def __init__(self):
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone=ZoneInfo(settings.scheduler_timezone))
         self.collector_dict = BaseCollector.collect_dict()
         self.analyzer_dict = BaseAnalyzer.analyzer_dict()
         self.batch_processor_dict = self._build_batch_processors()
+        # 补跑尝试记录：{"run_type:slot_iso" -> [尝试时间, ...]}，只在内存里，
+        # 重启就清空——可接受，见 _catchup_tick 的说明。
+        self._catchup_attempts: dict[str, list[datetime]] = {}
 
     def _build_batch_processors(self) -> dict:
         """批量摘要处理器。新闻族（source ∈ NEWS_SOURCES）统一由 NewsAnalyzer
@@ -97,6 +110,64 @@ class JobScheduler:
         await self._track("lightweight_snapshot", self.lightweight_snapshot())
     async def _weekly_leaderboard_tracked(self):
         await self._track("weekly_leaderboard", self.weekly_leaderboard())
+
+    async def _catchup_tick(self):
+        """开机/重启补跑：APScheduler 的任务表只在内存里，容器重启（部署、
+        故障重启都算）如果正好跨过某个 cron 整点，那个点就直接错过了，要等
+        到明天同一时间才会再跑——news_collect_afternoon 曾经连续 3 天都因为
+        这样一次没跑成。这里每隔 catchup_interval_minutes 检查一次今天该跑
+        的每个整点是否已经有对应的 PipelineRun 记录，没有就直接在这里把
+        对应的采集函数跑一遍，不用等到明天。
+
+        daily_push 不在补跑范围内：那是主动推给订阅用户的每日推送，晚几个
+        小时补发一条"今天的内容"体验上比不发还奇怪，缺推送交给 W004 告警
+        即可，不自动补。
+        """
+        if not settings.catchup_enabled:
+            return
+        tz = ZoneInfo(settings.scheduler_timezone)
+        now = datetime.now(timezone.utc)
+        grace = timedelta(minutes=settings.catchup_grace_minutes)
+        backoff = timedelta(minutes=settings.catchup_retry_backoff_minutes)
+
+        for spec in self.CATCHUP_JOBS:
+            run_type = spec["run_type"]
+            now_local = now.astimezone(tz)
+            slot_starts = sorted(
+                now_local.replace(hour=h, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+                for h in spec["hours"]
+            )
+            for i, slot_start in enumerate(slot_starts):
+                if slot_start > now or now - slot_start < grace:
+                    continue  # 时间点还没到，或刚过点——给正常 cron 留出跑完的时间
+                window_end = slot_starts[i + 1] if i + 1 < len(slot_starts) else slot_start + timedelta(days=1)
+
+                db = SessionLocal()
+                try:
+                    satisfied = db.query(PipelineRun).filter(
+                        PipelineRun.run_type == run_type,
+                        PipelineRun.started_at >= slot_start,
+                        PipelineRun.started_at < window_end,
+                    ).first()
+                finally:
+                    db.close()
+                if satisfied:
+                    continue  # 这个时间点已经跑过（正常 cron 或之前补跑过）
+
+                slot_key = f"{run_type}:{slot_start.isoformat()}"
+                attempts = self._catchup_attempts.setdefault(slot_key, [])
+                if len(attempts) >= settings.catchup_max_attempts:
+                    continue  # 试够次数了，剩下交给看门狗告警，不再自动重试
+                if attempts and (now - attempts[-1]) < backoff:
+                    continue  # 距上次尝试还没到退避时间
+
+                attempts.append(now)
+                logger.warning(
+                    f"⏰ 补跑：{run_type} 在 {slot_start.isoformat()} 该跑的没跑，"
+                    f"现在补上（第 {len(attempts)}/{settings.catchup_max_attempts} 次尝试）"
+                )
+                runner = getattr(self, spec["runner"])
+                await self._track(f"catchup_{run_type}", runner())
 
     async def setup(self):
         # 每天 8:00 采集项目
@@ -160,6 +231,18 @@ class JobScheduler:
                 next_run_time=datetime.now(timezone.utc),
             )
             logger.info(f"🐶 看门狗已启用，间隔 {settings.watchdog_interval_minutes}min，冷却 {settings.watchdog_cooldown_minutes}min")
+
+        # 补跑自检：每 catchup_interval_minutes 分钟检查一次今天的 cron 任务
+        # 有没有被容器重启撞漏，启动时立即先查一次
+        if settings.catchup_enabled:
+            self.scheduler.add_job(
+                self._catchup_tick,
+                IntervalTrigger(minutes=settings.catchup_interval_minutes),
+                id="scheduler_catchup",
+                name="补跑自检",
+                next_run_time=datetime.now(timezone.utc),
+            )
+            logger.info(f"⏰ 补跑自检已启用，间隔 {settings.catchup_interval_minutes}min，时区 {settings.scheduler_timezone}")
 
         self.scheduler.start()
         logger.info("✅ 定时调度器已启动")
