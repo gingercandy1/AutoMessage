@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import desc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import SessionLocal
 from app.database.models import UserFavorite, ContentItem
@@ -37,7 +37,7 @@ class HuggingFaceService:
         """该分类的当前排行（ADR-0002 单行 upsert，ContentItem 即最新快照）。"""
         db: Session = SessionLocal()
         try:
-            q = db.query(ContentItem).filter(ContentItem.source == self.NAME)
+            q = db.query(ContentItem).options(joinedload(ContentItem.summary)).filter(ContentItem.source == self.NAME)
             if pipeline_tag:
                 q = q.filter(
                     ContentItem.metrics["pipeline_tag"].as_string() == pipeline_tag
@@ -54,7 +54,7 @@ class HuggingFaceService:
         """长期热门：按 likes 排序，体现长期积累的热度。"""
         db: Session = SessionLocal()
         try:
-            q = db.query(ContentItem).filter(ContentItem.source == self.NAME)
+            q = db.query(ContentItem).options(joinedload(ContentItem.summary)).filter(ContentItem.source == self.NAME)
             if pipeline_tag:
                 q = q.filter(
                     ContentItem.metrics["pipeline_tag"].as_string() == pipeline_tag
@@ -82,6 +82,7 @@ class HuggingFaceService:
             like_pattern = f"%{keyword}%"
             items = (
                 db.query(ContentItem)
+                .options(joinedload(ContentItem.summary))
                 .filter(
                     ContentItem.source == self.NAME,
                     ContentItem.external_id.ilike(like_pattern),
@@ -109,6 +110,7 @@ class HuggingFaceService:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             items = (
                 db.query(ContentItem)
+                .options(joinedload(ContentItem.summary))
                 .filter(ContentItem.source == self.NAME)
                 .filter(ContentItem.metrics["last_modified"].as_string().isnot(None))
                 .filter(ContentItem.metrics["last_modified"].as_string() >= cutoff.isoformat())
@@ -136,6 +138,7 @@ class HuggingFaceService:
             # ADR-0002 单行设计：收藏锚定的 ContentItem.id 即该模型唯一行
             return (
                 db.query(ContentItem)
+                .options(joinedload(ContentItem.summary))
                 .filter(ContentItem.id.in_(item_ids))
                 .all()
             )
