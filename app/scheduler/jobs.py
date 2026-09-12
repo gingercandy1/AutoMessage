@@ -104,6 +104,8 @@ class JobScheduler:
         await self._track("process_backlog", self.daily_process())
     async def _news_collect_tracked(self):
         await self._track("news_collect_afternoon", self.news_collect())
+    async def _daily_review_tracked(self):
+        await self._track("daily_review", self.daily_review())
     async def _daily_push_tracked(self):
         await self._track("daily_push", self.daily_push())
     async def _lightweight_snapshot_tracked(self):
@@ -205,8 +207,15 @@ class JobScheduler:
             id="daily_push",
             name="每日主动推送"
         )
-        # 送审（Q4 审查闸门）不再单独固定 10:00 跑一次：daily_process 里新闻批
-        # 处理完立即调用 daily_review()，跟着 30 分钟积压检查节奏走，见 process_backlog。
+        # 送审（Q4 审查闸门）每天 9:00 / 21:00 各一次。早先是内联在 daily_process
+        # 里跟着 30 分钟积压检查跑，节奏太密；时效窗口放宽到 30 天且超窗条目有
+        # expired 收尾之后，摘要完隔几小时再送审不会丢条目，故拆成独立任务。
+        self.scheduler.add_job(
+            self._daily_review_tracked,
+            CronTrigger(hour="9,21", minute=0),
+            id="daily_review",
+            name="送审(12h)"
+        )
         # Q9 每 6h 轻量快照：14:00 / 20:00 重新采集 GitHub + HF 指标（不触发 LLM）
         self.scheduler.add_job(
             self._lightweight_snapshot_tracked,
@@ -325,8 +334,8 @@ class JobScheduler:
 
     async def daily_process(self):
         """批处理积压（每 30 分钟一次，见 process_backlog job）。新闻优先：
-        新闻批处理完立即调 daily_review() 送审，不等其它源处理完——用户需求：
-        处理和送审要紧接着，不能靠"猜 10:00 前处理完没"。"""
+        先摘要新闻再处理其它源，送审则由独立的 daily_review job（9:00/21:00）
+        负责，不再跟着这里的 30 分钟节奏走。"""
         logger.info("🔁 启动批处理流程（新闻优先）...")
         run_started = datetime.now(timezone.utc)
         ok_total = 0
@@ -335,12 +344,6 @@ class JobScheduler:
             news_result = await self._run_processor("news")
             ok_total += news_result["success"]
             fail_total += news_result["failed"]
-            # 无条件送审，不只在本轮有新成功摘要时才调用：否则如果上一轮
-            # send_for_review 本身推送失败，那批已 processed=1 的新闻要等到
-            # 未来某一轮又恰好有新摘要成功才会被重新送审，可能卡住很久。
-            # send_for_review 内部按 processed=1 查询，没有待审条目时本就是
-            # 一次廉价的空查询，无条件调用成本可忽略。
-            await self.daily_review()
 
             for key in self.batch_processor_dict:
                 if key == "news":
