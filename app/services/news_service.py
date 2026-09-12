@@ -1,10 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import desc, func, or_
+from sqlalchemy import desc, exists, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.collectors.news.news_base import NEWS_SOURCES
+from app.config import settings
 from app.database import SessionLocal
 from app.database.models import ContentItem, UserFavorite, Summary
 
@@ -160,15 +161,18 @@ class NewsService:
         finally:
             db.close()
 
-    def get_unreviewed_news(self, limit: int = 50, max_age_days: int = 14) -> List[ContentItem]:
+    def get_unreviewed_news(self, limit: int = 50, max_age_days: int | None = None) -> List[ContentItem]:
         """待审查的新闻：AI 已摘要（存在 Summary 行）且尚未送审(review_status IS NULL)。Q4。
 
         以 Summary 存在为判定依据，而非 processed 标记——历史上摘要由多条路径
         写入，processed 可能停留在 0 导致已摘要条目永远进不了审查队列。
 
-        时效性：仅返回 discovered_at 在近 max_age_days 天内的新闻，超过 7 天
-        的旧闻不再送审（避免推送过时新闻）。
+        时效性：仅返回 discovered_at 在近 max_age_days 天内的新闻（默认取
+        settings.review_max_age_days），避免推送过时新闻。超窗的条目由
+        expire_stale_unreviewed() 收尾，不会无限停留在 review_status IS NULL。
         """
+        if max_age_days is None:
+            max_age_days = settings.review_max_age_days
         cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         db: Session = SessionLocal()
         try:
@@ -183,6 +187,33 @@ class NewsService:
                 .order_by(desc(ContentItem.discovered_at)) \
                 .limit(limit) \
                 .all()
+        finally:
+            db.close()
+
+    def expire_stale_unreviewed(self, max_age_days: int | None = None) -> int:
+        """给超出送审窗口的待审条目打终态 review_status='expired'，返回处理条数。
+
+        没有这一步的话，已摘要但错过时效窗口的条目会永远停在 review_status
+        IS NULL：既不会被 get_unreviewed_news() 取到推送，也不会退出待审计数，
+        积压只增不减（曾累积到 128 条）。只处理已有 Summary 的条目——尚未摘要的
+        留给批处理流程，它们之后被摘要时若仍超窗，会在下一轮扫到。
+        """
+        if max_age_days is None:
+            max_age_days = settings.review_max_age_days
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        has_summary = exists().where(Summary.project_id == ContentItem.id)
+        db: Session = SessionLocal()
+        try:
+            expired = db.query(ContentItem) \
+                .filter(
+                    (ContentItem.source.in_(self.news_sources)) &
+                    (ContentItem.review_status.is_(None)) &
+                    (ContentItem.discovered_at < cutoff) &
+                    has_summary
+                ) \
+                .update({"review_status": "expired"}, synchronize_session=False)
+            db.commit()
+            return expired
         finally:
             db.close()
 

@@ -256,6 +256,11 @@ class ReviewService:
         """推送待审查新闻。优先推送到审查频道（review_chat_id，bot 需为该频道
         管理员），未配置时退回各审查管理员私聊（review_admin_ids）。
         返回成功送审条数。"""
+        # 先给超窗条目收尾再取队列：两者用同一个时效窗口，集合互不重叠，
+        # 且保证每轮送审都会清掉当天新超期的条目（否则积压只增不减）。
+        expired = self.news.expire_stale_unreviewed()
+        if expired:
+            logger.info(f"🗄 {expired} 条超出送审时效窗口，标记 expired 不再送审")
         items = self.news.get_unreviewed_news(limit=50)
         if settings.review_chat_id:
             targets = [settings.review_chat_id]

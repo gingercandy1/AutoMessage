@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         default=0,
         description="公开频道 Chat ID（审查通过后才转发到这里，Q4）"
     )
+    review_max_age_days: int = Field(
+        default=30,
+        description="送审时效窗口（天）：只有 discovered_at 在此窗口内的新闻才会推送审查；超窗的会被标记 review_status='expired' 收尾，不再重复参与送审"
+    )
 
     # ============ Database ============
     database_url: str = Field(
