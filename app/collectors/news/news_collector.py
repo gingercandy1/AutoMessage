@@ -196,9 +196,9 @@ class NewsCollector(BaseCollector):
     def _last_clusters(self, value: List[List[int]]) -> None:
         self._deduper._last_clusters = value
 
-    def _write_clusters(self, item_id_by_index: Dict[int, int]):
+    def _write_clusters(self, item_id_by_index: Dict[int, int], db=None):
         """委托给共享 NewsDeduplicator 写 NewsCluster。"""
-        self._deduper.write_clusters(item_id_by_index)
+        self._deduper.write_clusters(item_id_by_index, db=db)
 
     async def _fetch_full_text(self, url: str) -> str:
         """抓取并提取文章正文（Q3，委托共享实现）"""
@@ -346,7 +346,7 @@ class NewsCollector(BaseCollector):
                 db.execute(stmt)
             
             # 写入新闻聚类（Q10）
-            self._write_clusters(item_id_by_index)
+            self._write_clusters(item_id_by_index, db=db)
 
             db.commit()
             logger.info(f"✅ 新闻入库完成")
