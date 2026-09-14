@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import trafilatura
+from htmldate import find_date
 from rapidfuzz import fuzz
 from sqlalchemy.dialects.postgresql import insert, JSONB
 from sqlalchemy import or_, cast
@@ -35,6 +36,39 @@ async def fetch_full_text(url: str) -> str:
     except Exception as e:
         logger.warning(f"新闻正文抓取失败 {url}: {e}")
         return ""
+
+
+async def fetch_full_text_with_date(url: str) -> tuple[str, Optional[datetime]]:
+    """同 fetch_full_text，额外用 htmldate 从页面提取真实发布日期。
+
+    用于没有 RSS/API 结构化发布时间、只能靠抓页面的采集器（目前是
+    official_blog）：不提取日期的话 discovered_at 只能退回 now()，一篇
+    2022 年的旧文章只要今天出现在列表页里，就会被当成"刚发现"的新内容，
+    绕过所有按 discovered_at 判断新鲜度的过滤。
+    """
+    try:
+        async with httpx.AsyncClient(
+            timeout=20.0, follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        ) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        html = resp.text
+        extracted = trafilatura.extract(
+            html, include_comments=False, include_tables=False, no_fallback=False
+        )
+        text = extracted[:8000] if extracted and len(extracted) > 200 else ""
+        date_str = find_date(html)
+        published_at = None
+        if date_str:
+            try:
+                published_at = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+            except ValueError:
+                published_at = None
+        return text, published_at
+    except Exception as e:
+        logger.warning(f"新闻正文/日期抓取失败 {url}: {e}")
+        return "", None
 
 
 #: 所有属于“新闻”的 ContentItem.source 值。显式列出全部新闻族源，
