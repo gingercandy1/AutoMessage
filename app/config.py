@@ -145,20 +145,7 @@ class Settings(BaseSettings):
         description="Comma-separated keywords for HN filtering"
     )
     news_rss_feeds: str = Field(
-        # hnrss.org/newest 本身就是 Hacker News 的 RSS 镜像，而 NewsCollector
-        # 同时也用 HackerNewsClient 直接采 HN——两条路径抓到同一条会撞
-        # content_items.url 唯一约束，导致 NewsCollector.save() 那一整批（还没
-        # commit）全部跟着回滚，是过去一段时间 hacker_news/news 一直没有新内容
-        # 入库的直接原因。save() 已经加了按 url 兜底去重，这里再把纯冗余的源去掉。
-        # 2026-09-14：原先只有 5 个源，信息量太薄，补了 7 个——都用项目的
-        # UA（AIProjectBot/1.0）实测过能正常拿到 RSS/Atom（200 + 有效 XML），
-        # 不是随手抄的链接：MIT Tech Review/Ars Technica/Wired 是 AI 分类
-        # tag feed（不是全站流），The Register 是其 AI/ML 频道；The Decoder、
-        # MarkTechPost 是纯 AI 资讯站；雷锋网是全站 feed 但内容本来就以
-        # AI/机器人/具身智能为主，抽样看了最新十几条标题符合预期，未加过滤。
-        # 试过 artificialintelligence-news.com（403）、zhidx.com/feed（500）、
-        # infoq.cn/feed（不是有效 feed 端点），都打不通，没有加进来。
-        default="https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://simonwillison.net/atom/everything/,https://www.qbitai.com/feed,https://www.technologyreview.com/topic/artificial-intelligence/feed,https://arstechnica.com/tag/ai/feed/,https://www.theregister.com/software/ai_ml/headlines.atom,https://www.wired.com/feed/tag/ai/latest/rss,https://the-decoder.com/feed/,https://www.marktechpost.com/feed/,https://www.leiphone.com/feed",
+        default="https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://simonwillison.net/atom/everything/,https://www.technologyreview.com/topic/artificial-intelligence/feed,https://arstechnica.com/tag/ai/feed/,https://www.theregister.com/software/ai_ml/headlines.atom,https://www.wired.com/feed/tag/ai/latest/rss,https://the-decoder.com/feed/,https://www.marktechpost.com/feed/",
         description="Comma-separated RSS feed URLs"
     )
     news_collection_limit: int = Field(
@@ -285,15 +272,11 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        # 环境变量前缀
         env_prefix = ""
-        # 大小写不敏感
         case_sensitive = False
 
-        # .env 文件位置
         env_file = root_dir / ".env" if os.getenv("APP_ENV") == "production" else root_dir / ".env.local"
         env_file_encoding = "utf-8"
-        # 其他配置
         extra = "ignore"  # 忽略多余的环境变量
 
     @field_validator("telegram_bot_token")
