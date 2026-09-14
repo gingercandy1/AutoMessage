@@ -150,11 +150,23 @@ class Settings(BaseSettings):
         # content_items.url 唯一约束，导致 NewsCollector.save() 那一整批（还没
         # commit）全部跟着回滚，是过去一段时间 hacker_news/news 一直没有新内容
         # 入库的直接原因。save() 已经加了按 url 兜底去重，这里再把纯冗余的源去掉。
-        default="https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://simonwillison.net/atom/everything/,https://www.qbitai.com/feed",
+        # 2026-09-14：原先只有 5 个源，信息量太薄，补了 7 个——都用项目的
+        # UA（AIProjectBot/1.0）实测过能正常拿到 RSS/Atom（200 + 有效 XML），
+        # 不是随手抄的链接：MIT Tech Review/Ars Technica/Wired 是 AI 分类
+        # tag feed（不是全站流），The Register 是其 AI/ML 频道；The Decoder、
+        # MarkTechPost 是纯 AI 资讯站；雷锋网是全站 feed 但内容本来就以
+        # AI/机器人/具身智能为主，抽样看了最新十几条标题符合预期，未加过滤。
+        # 试过 artificialintelligence-news.com（403）、zhidx.com/feed（500）、
+        # infoq.cn/feed（不是有效 feed 端点），都打不通，没有加进来。
+        default="https://techcrunch.com/category/artificial-intelligence/feed/,https://venturebeat.com/category/ai/feed/,https://www.theverge.com/rss/ai-artificial-intelligence/index.xml,https://simonwillison.net/atom/everything/,https://www.qbitai.com/feed,https://www.technologyreview.com/topic/artificial-intelligence/feed,https://arstechnica.com/tag/ai/feed/,https://www.theregister.com/software/ai_ml/headlines.atom,https://www.wired.com/feed/tag/ai/latest/rss,https://the-decoder.com/feed/,https://www.marktechpost.com/feed/,https://www.leiphone.com/feed",
         description="Comma-separated RSS feed URLs"
     )
     news_collection_limit: int = Field(
-        default=100,
+        # 源从 5 个加到 12 个之后，RSS 那边一轮能抓到的候选量明显变多，100
+        # 这个上限会把新源挤掉大半（截断只看 all_items[:limit]，不分源保底）；
+        # 调到 200 给新源留出空间。这个值同时也是 hf_papers 的 max_items 上限
+        # （复用同一个配置项），一并放宽。
+        default=200,
         description="Max news items to collect per run"
     )
     news_dedup_enabled: bool = Field(
@@ -182,6 +194,10 @@ class Settings(BaseSettings):
     hf_papers_min_upvotes: int = Field(
         default=5,
         description="论文实用性筛选阈值：HF 社区点赞数达标，或论文本身带 GitHub 仓库/项目页（可直接用），二者满足其一才收录；都不满足则视为纯理论/太专业，丢弃"
+    )
+    hf_papers_practicality_threshold: float = Field(
+        default=6.0,
+        description="LLM 摘要阶段的实用性/应用性打分阈值（0-10）：低于此分的论文视为学术性过强，摘要生成后自动标记 rejected，不进入人工审查/推送队列"
     )
 
     # ---- LLM 排行榜真 API（T07-T10） ----

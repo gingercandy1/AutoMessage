@@ -143,6 +143,7 @@ docker-compose build --no-cache
 docker-compose exec -T bot alembic upgrade head
 # 重启
 docker compose up -d --build
+docker compose restart bot
 
 ### 迁移数据
 # 1. 初始化（只需要做一次，且既然你已经有 migrations 文件夹了，这步跳过）
