@@ -63,7 +63,7 @@ class NewsService:
             db.close()
 
     def get_hacker_news(self, limit: int = 100) -> List[ContentItem]:
-        """仅 Hacker News"""
+        """仅 Hacker News，按最新发现时间排序"""
         db: Session = SessionLocal()
         try:
             return db.query(ContentItem) \
@@ -71,7 +71,7 @@ class NewsService:
                 .filter(
                     (ContentItem.source == "hacker_news")
                 ) \
-                .order_by(desc(ContentItem.metrics["hn_score"].as_integer())) \
+                .order_by(desc(ContentItem.discovered_at)) \
                 .limit(limit) \
                 .all()
         finally:
