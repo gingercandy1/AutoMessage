@@ -172,7 +172,6 @@ class JobScheduler:
                 await self._track(f"catchup_{run_type}", runner())
 
     async def setup(self):
-        # 每天 8:00 采集项目
         self.scheduler.add_job(
             self._daily_collect_tracked,
             CronTrigger(hour=8, minute=0),

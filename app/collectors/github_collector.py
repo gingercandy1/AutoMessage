@@ -430,7 +430,6 @@ class GitHubTrendingCollector(BaseCollector):
         desc_tag = article.select_one("p")
         description = desc_tag.get_text(strip=True) if desc_tag else None
 
-        # 编程语言
         lang_tag = article.select_one('[itemprop="programmingLanguage"]')
         language = lang_tag.get_text(strip=True) if lang_tag else None
 
@@ -440,7 +439,6 @@ class GitHubTrendingCollector(BaseCollector):
         if gained_tag:
             stars_gained = self._parse_number(gained_tag.get_text())
 
-        # 贡献者头像列表
         built_by = []
         avatar_tags = article.select("span.d-inline-block.mr-2 a img")
         for img in avatar_tags:

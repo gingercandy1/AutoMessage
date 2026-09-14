@@ -47,7 +47,6 @@ class HuggingfaceProjectRenderer(BaseProjectRenderer):
 
         name = license_name.lower()
 
-        # 1. 精确匹配
         exact_map = {
             "mit": "🔓",
             "apache-2.0": "📜",
@@ -64,7 +63,6 @@ class HuggingfaceProjectRenderer(BaseProjectRenderer):
         if name in exact_map:
             return exact_map[name], license_name
 
-        # 2. 关键词模糊匹配
         keyword_map = {
             "mit": "🔓",
             "apache": "📜",
@@ -105,7 +103,6 @@ class HuggingfaceProjectRenderer(BaseProjectRenderer):
         if library:
             sub_meta_parts.append(f"📦 {escape(str(library))}")
 
-        # 使用新的解析方法
         license_name = model.metrics.get("license")
         license_icon, license_label = HuggingfaceProjectRenderer._get_license_info(license_name)
         sub_meta_parts.append(f"{license_icon} {escape(license_label)}")

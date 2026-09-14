@@ -67,7 +67,6 @@ class NewsCollector(BaseCollector):
         if not url:
             url = f"https://news.ycombinator.com/item?id={item.get('id')}"
         
-        # 过滤：分数太低或不包含关键词
         score = item.get("score", 0)
         if score < settings.news_hn_min_score:
             return None
@@ -76,18 +75,14 @@ class NewsCollector(BaseCollector):
         if not self._matches_keywords(text, [k.strip().lower() for k in settings.news_hn_keywords.split(",")]):
             return None
         
-        # 作者
         author = item.get("by", "")
-        
-        # 发布时间
+
         published_at = None
         if item.get("time"):
             published_at = datetime.fromtimestamp(item["time"], tz=timezone.utc)
-        
-        # 外部 ID
+
         external_id = f"hn_{item.get('id')}"
-        
-        # 分类
+
         category = self._categorize_news(title, item.get("text", ""), "hacker_news")
         
         return {
@@ -110,10 +105,8 @@ class NewsCollector(BaseCollector):
         if not entry.title or not entry.url:
             return None
         
-        # 外部 ID 使用 URL 的哈希
         external_id = f"rss_{hashlib.md5(entry.url.encode()).hexdigest()[:16]}"
-        
-        # 分类
+
         category = self._categorize_news(entry.title, entry.description or "", source)
         
         return {
@@ -148,7 +141,6 @@ class NewsCollector(BaseCollector):
         if not story_ids:
             return []
         
-        # 批量获取详情
         items = await self.hn_client.get_items_batch(story_ids, max_concurrent=20)
         
         normalized = []
@@ -158,7 +150,6 @@ class NewsCollector(BaseCollector):
                 if norm:
                     normalized.append(norm)
         
-        # 按分数排序
         normalized.sort(key=lambda x: x.get("hn_score", 0), reverse=True)
         
         logger.info(f"✅ Hacker News: {len(normalized)} 条符合条件")
@@ -182,7 +173,6 @@ class NewsCollector(BaseCollector):
             if norm:
                 normalized.append(norm)
         
-        # 按发布时间排序
         normalized.sort(key=lambda x: x.get("published_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         
         logger.info(f"✅ RSS: {len(normalized)} 条")
@@ -252,7 +242,6 @@ class NewsCollector(BaseCollector):
         all_items = hn_items + rss_items
         all_items = self._deduplicate(all_items)
 
-        # 限制数量
         all_items = all_items[:config.max_items]
 
         # Q3: 采集时缓存全文到 raw_data['full_text']，供摘要阶段只读缓存
@@ -273,7 +262,6 @@ class NewsCollector(BaseCollector):
                 source = item["source"]
                 external_id = item["external_id"]
                 
-                # 准备 metrics
                 published_at = item.get("published_at")
                 metrics_data = {
                     "category": item.get("category", "ai"),
@@ -292,7 +280,6 @@ class NewsCollector(BaseCollector):
                         "tags": item.get("tags", []),
                     })
                 
-                # 检查是否存在
                 existing = db.query(ContentItem).filter_by(
                     source=source,
                     external_id=external_id

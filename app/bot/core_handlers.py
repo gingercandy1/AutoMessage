@@ -190,7 +190,6 @@ async def cmd_watchdog(message: Message):
                 detail_preview = ", ".join(f"{k}={str(v)[:60]}" for k, v in list(r["details"].items())[:3])
                 lines.append(f"  🔍 {detail_preview}")
             lines.append("")
-        # 最近告警历史（可追溯）
         events = AlertService.recent_events(limit=5)
         if events:
             lines.append("<b>最近告警历史：</b>")

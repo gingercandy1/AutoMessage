@@ -605,5 +605,5 @@ async def cmd_help(message: Message):
         help_text,
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=GitHubKeyboards.main_menu()  # 直接显示主菜单
+        reply_markup=GitHubKeyboards.main_menu()
     )

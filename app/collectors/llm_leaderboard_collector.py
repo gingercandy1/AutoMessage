@@ -552,8 +552,6 @@ class LLMLeaderboardCollector(BaseCollector):
             PLATFORM_AA: self._fetch_artificial_analysis,
             PLATFORM_LMARENA: self._fetch_lmarena,
             PLATFORM_OPENROUTER: self._fetch_openrouter,
-            # PLATFORM_VELLUM: self._fetch_vellum,
-            # PLATFORM_SEAL: self._fetch_seal,
         }
 
         all_entries = []

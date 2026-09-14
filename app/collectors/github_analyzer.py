@@ -89,7 +89,6 @@ class DataCleaner:
 
         for line in lines:
             stripped = line.strip()
-            # 如果这一行只包含链接和空格，跳过它
             if re.match(r'^\s*\[.+\]\(.+\)\s*$', stripped) or \
                     re.match(r'^\s*<.*?>\s*$', stripped) or \
                     re.match(r'^\s*https?://.*$', stripped):
@@ -102,7 +101,6 @@ class DataCleaner:
     def clean_topic(topic: str) -> str:
         """清理主题标签"""
         topic = topic.strip().lower()
-        # 移除特殊字符
         topic = re.sub(r'[^a-z0-9\-]', '', topic)
         return topic
 
@@ -151,7 +149,6 @@ class GitHubAnalyzer(BaseAnalyzer):
             raise
 
     def _build_context_sections(self, repo_info: ContentItem, commits_activity: Dict,  issues: Dict, dependencies: Dict, topics: List[str] = None, contributors: List[Dict] = None, languages: Dict[str, int] = None) -> Dict[str, str]:
-        # 基本信息
         basic_info = (
             f"Star数: {repo_info.metrics["stars"]} | "
             f"Fork数: {repo_info.metrics["forks"]} | "
@@ -162,7 +159,6 @@ class GitHubAnalyzer(BaseAnalyzer):
             f"更新时间: {repo_info.metrics["updated_at"]} | "
         )
 
-        # 活跃度
         activity = (
             f"近30天commits数: {commits_activity.get('commits_30_days', 0)} | "
             f"提交频率: {commits_activity.get('commit_frequency', '未知')} | "
@@ -170,7 +166,6 @@ class GitHubAnalyzer(BaseAnalyzer):
             f"最近一次commit: {commits_activity.get('last_commit_date', '未知')}"
         )
 
-        # Issues
         open_count = issues.get('open_count', 0)
         response_time = issues.get('issue_response_time', '未知')
         recent_issues_titles = '; '.join(
@@ -181,7 +176,6 @@ class GitHubAnalyzer(BaseAnalyzer):
             f"近期issue示例: {recent_issues_titles or '无'}"
         )
 
-        # 依赖
         dependencies_text = (
             f"依赖总数: {dependencies.get('total_dependencies', 0)}"
         )

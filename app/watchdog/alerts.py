@@ -122,7 +122,6 @@ class AlertService:
             logger.info("✅ 看门狗自检全部通过")
             return 0
 
-        # 冷却过滤
         to_send = []
         for r in bad:
             if force or _should_alert(r.check_name):

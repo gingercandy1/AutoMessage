@@ -114,7 +114,6 @@ class OpenRouterAdapter(OpenAICompatibleAdapter):
     BASE_URL = "https://openrouter.ai/api/v1"
     MODELS_URL = f"{BASE_URL}/models"
 
-    # 静态兜底列表：
     FALLBACK_FREE_MODELS = []
 
     # 类级缓存，避免每次 build_candidates 都打一次远程接口
@@ -172,7 +171,6 @@ class OpenRouterAdapter(OpenAICompatibleAdapter):
             if primary:
                 models.append(primary)
             free_models = self._fetch_free_models(api_key)
-            # 去重且不重复添加 primary
             for m in free_models:
                 if m not in models:
                     models.append(m)

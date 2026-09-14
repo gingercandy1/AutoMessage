@@ -120,7 +120,6 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
     def _build_context_sections(self, model_info: Dict, commits: Dict,
                                 discussions: Dict, files: list) -> Dict[str, str]:
 
-        # 基本信息
         basic_info = (
             f"Likes: {model_info.get('likes', 0)} | "
             f"Downloads: {model_info.get('downloads', 0):,} | "
@@ -129,7 +128,6 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
             f"最後更新: {model_info.get('lastModified', '未知')}"
         )
 
-        # 活躍度
         activity = (
             f"近期的 commits 數量: {commits.get('commits_count', 0)} | "
             f"是否活躍: {'是' if commits.get('is_active') else '否'} | "
@@ -146,7 +144,6 @@ class HuggingFaceAnalyzer(BaseAnalyzer):
             f"近期討論: {recent_titles or '無'}"
         )
 
-        # 檔案概況
         files_text = f"模型包含檔案數: {len(files)} | "
         if files:
             config = any(f.endswith('config.json') for f in files)

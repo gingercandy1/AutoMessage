@@ -145,7 +145,6 @@ class ProductHuntCollector(BaseCollector):
             if norm:
                 posts.append(norm)
 
-        # 时间过滤
         since = datetime.now(timezone.utc) - timedelta(hours=config.since_hours)
         posts = [
             p for p in posts

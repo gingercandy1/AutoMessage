@@ -69,7 +69,6 @@ class AppLogger:
             file_handler.setFormatter(formatter)
             root.addHandler(file_handler)
 
-        # 屏蔽第三方库的噪音日志
         for noisy_lib in ("httpx", "httpcore", "aiogram", "urllib3", "aiohttp"):
             logging.getLogger(noisy_lib).setLevel(logging.WARNING)
         cls._initialized = True

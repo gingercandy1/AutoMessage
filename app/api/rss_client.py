@@ -101,25 +101,20 @@ class RSSClient:
     def _parse_entry(self, entry: feedparser.FeedParserDict, feed_url: str) -> Optional[RSSFeedEntry]:
         """解析单个 RSS 条目"""
         try:
-            # 标题
             title = entry.get("title", "").strip()
             if not title:
                 return None
 
-            # URL
             url = entry.get("link", "").strip()
             if not url:
                 return None
 
-            # 描述/摘要
             description = entry.get("summary", "") or entry.get("description", "") or ""
             description = description.strip()
 
-            # 作者
             author = entry.get("author", "") or ""
             author = author.strip() if author else None
 
-            # 发布时间
             published_at = None
             for date_field in ["published_parsed", "updated_parsed", "created_parsed"]:
                 if entry.get(date_field):
@@ -134,14 +129,12 @@ class RSSClient:
                     except Exception:
                         continue
 
-            # 内容
             content = None
             if entry.get("content"):
                 content = entry["content"][0].get("value", "")
             elif entry.get("description"):
                 content = entry["description"]
 
-            # 标签
             tags = []
             if entry.get("tags"):
                 tags = [tag.get("term", "") for tag in entry["tags"] if tag.get("term")]
@@ -208,7 +201,6 @@ class RSSClient:
         for entry in feed.entries[:max_entries]:
             parsed = self._parse_entry(entry, feed_url)
             if parsed:
-                # 按时间过滤
                 if since and parsed.published_at and parsed.published_at < since:
                     continue
                 entries.append(parsed)
@@ -245,7 +237,6 @@ class RSSClient:
 
 
 async def main():
-    # 测试
     client = RSSClient()
     feeds = settings.news_rss_feeds.split(",")
     feeds = [f.strip() for f in feeds if f.strip()]

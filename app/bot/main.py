@@ -101,7 +101,6 @@ class BotManager:
             logger.info(f"📡 收到信号: {signal.Signals(signum).name}")
             asyncio.create_task(self.shutdown())
 
-        # 处理 SIGINT (Ctrl+C) 和 SIGTERM (kill)
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop.add_signal_handler(sig, signal_handler, sig)
@@ -121,7 +120,6 @@ class BotManager:
             logger.info("📡 启动 Telegram Polling...")
             await self.bot.delete_webhook(drop_pending_updates=True)
 
-            # 5. 创建 polling 任务
             polling_task = asyncio.create_task(
                 self.dp.start_polling(
                     self.bot,

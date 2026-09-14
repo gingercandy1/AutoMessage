@@ -47,7 +47,6 @@ class NewsAnalyzer(BaseAnalyzer):
             resp.raise_for_status()
             html = resp.text
 
-            # 尝试用 trafilatura 提取
             extracted = trafilatura.extract(
                 html,
                 include_comments=False,
@@ -57,11 +56,9 @@ class NewsAnalyzer(BaseAnalyzer):
             if extracted and len(extracted) > 200:
                 return extracted[:8000]
 
-            # 备选：readability
             doc = Document(html)
             content = doc.summary()
             if content:
-                # 简单清理 HTML
                 import re
                 content = re.sub(r'<[^>]+>', '', content)
                 content = re.sub(r'\s+', ' ', content)
@@ -74,8 +71,7 @@ class NewsAnalyzer(BaseAnalyzer):
 
     def _build_context_sections(self, item: ContentItem) -> Dict[str, str]:
         metrics = item.metrics or {}
-        
-        # 基本信息
+
         source_label = "Hacker News" if item.source == "hacker_news" else "新闻源"
         category_labels = {
             "ai": "AI/机器学习",
@@ -105,7 +101,6 @@ class NewsAnalyzer(BaseAnalyzer):
             tags_str = ", ".join(metrics["tags"][:5])
             basic_info += f"标签: {tags_str}\n"
 
-        # 发布时间
         published_at = metrics.get("published_at")
         if published_at:
             basic_info += f"发布时间: {published_at}\n"
@@ -116,7 +111,6 @@ class NewsAnalyzer(BaseAnalyzer):
         }
 
     async def build_context(self, url: str) -> str:
-        # 从 URL 查找 ContentItem
         db_item = await self._find_content_item(url)
         if not db_item:
             # 兜底：直接抓取 URL 内容
@@ -139,7 +133,6 @@ class NewsAnalyzer(BaseAnalyzer):
         elif not full_content:
             full_content = db_item.raw_data.get("content", "") if db_item.raw_data else ""
 
-        # 清理内容
         cleaned_content = self.cleaner.clean_readme(full_content, max_length=6000)
 
         if db_item.source == "hf_papers":
@@ -299,7 +292,6 @@ class NewsAnalyzer(BaseAnalyzer):
 
 async def main():
     analyzer = NewsAnalyzer()
-    # 测试用
     prompt = await analyzer.build_context("https://news.ycombinator.com/item?id=123456")
     print(prompt[:500])
 

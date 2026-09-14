@@ -143,7 +143,6 @@ def check_pipeline_health() -> CheckResult:
         return CheckResult("W003_PIPELINE", "critical", f"健康查询本身失败：{h['error']}", {"error": h["error"]}, "检查数据库连接与日志")
     success = h.get("overall_success_rate_pct", 100)
     total = h.get("total_items", 0)
-    # 统计未处理 backlog
     unprocessed = sum(s.get("unprocessed", 0) for s in h.get("per_source", {}).values())
     threshold = settings.watchdog_pipeline_success_threshold
     if success < threshold:
@@ -216,7 +215,6 @@ def check_job_freshness(heartbeat: Optional[Dict[str, Any]] = None) -> List[Chec
             else:
                 results.append(CheckResult(f"W004_FRESH_{run_type.upper()}", "ok", f"「{label}」运行正常，{age_h:.0f} 小时前刚跑过", {"age_hours": round(age_h, 1)}, ""))
 
-        # 检查 apscheduler 心跳（若有记录）
         if hb:
             for job_id, info in hb.items():
                 if info.get("status") == "failed":
@@ -274,7 +272,6 @@ def check_snapshot_staleness() -> CheckResult:
     finally:
         db.close()
 
-# 聚合入口
 async def run_all_checks() -> List[CheckResult]:
     results: List[CheckResult] = []
     results.append(await check_github_token())

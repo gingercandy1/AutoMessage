@@ -65,7 +65,6 @@ class HuggingFaceCollector(BaseCollector):
             if not description and likes == 0 and downloads == 0:
                 continue
 
-            # 解析 tags
             parsed_tags = self._parse_tags(m.get("tags", []))
 
             record = {
@@ -173,7 +172,6 @@ class HuggingFaceCollector(BaseCollector):
     def configs(self):
         configs = []
         for key in HuggingFaceClient.PIPELINE_MAP.keys():
-            # 热门：按 trendingScore 排序
             configs.append(HuggingFaceConfig(
                 category_key=key,
                 limit=100,

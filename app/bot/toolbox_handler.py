@@ -124,7 +124,6 @@ class ToolboxKeyboards:
     @staticmethod
     def toolbox_menu() -> InlineKeyboardMarkup:
         rows = []
-        # 两个一行排列
         tool_list = list(TOOLS.values())
         for i in range(0, len(tool_list), 2):
             row = [InlineKeyboardButton(text=t.button_text, callback_data=t.callback_data)
