@@ -259,21 +259,30 @@ def save_news_items(
                 existing.raw_data = item.get("raw_data")
                 content_item = existing
             else:
-                content_item = ContentItem(
-                    source=source,
-                    external_id=external_id,
-                    title=item["title"],
-                    url=item["url"],
-                    description=item["description"],
-                    author=item.get("author"),
-                    category=item.get("category"),
-                    discovered_at=item.get("published_at") or now,
-                    processed=0,
-                    metrics=metrics,
-                    raw_data=item.get("raw_data"),
-                )
-                db.add(content_item)
-                db.flush()
+                # content_items.url 有独立的唯一约束，不分 source：同一 URL 若已被
+                # 别的源（或本源更早的 external_id 方案）先插入，这里直接插入会在
+                # db.flush() 抛 IntegrityError，导致本函数一次没 commit 的整批全部
+                # 回滚（见 news_collector.py 的同类修复注释）。这里同样先按 url
+                # 查一次兜底，撞了就复用已有行而不重复插入。
+                existing_by_url = db.query(ContentItem).filter_by(url=item["url"]).first()
+                if existing_by_url:
+                    content_item = existing_by_url
+                else:
+                    content_item = ContentItem(
+                        source=source,
+                        external_id=external_id,
+                        title=item["title"],
+                        url=item["url"],
+                        description=item["description"],
+                        author=item.get("author"),
+                        category=item.get("category"),
+                        discovered_at=item.get("published_at") or now,
+                        processed=0,
+                        metrics=metrics,
+                        raw_data=item.get("raw_data"),
+                    )
+                    db.add(content_item)
+                    db.flush()
 
             item_id_by_index[index] = content_item.id
 
@@ -305,6 +314,9 @@ def save_news_items(
         logger.info(f"✅ 新闻入库完成: {len(records)} 条")
 
     except Exception as e:
-        print(e)
+        # 不 rollback 直接 close 会把 session 留在 aborted 事务状态，且此前用
+        # print() 输出到 stdout，不进 AppLogger，批量丢失完全无感知。
+        db.rollback()
+        logger.error(f"❌ 新闻入库失败，本批 {len(records)} 条整体回滚: {e}")
     finally:
         db.close()

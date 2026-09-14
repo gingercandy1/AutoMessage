@@ -129,6 +129,8 @@ class BatchSummary:
                     self._mark_processed(db, project.id, 1)
                     db.commit()
                     logger.info(f"✅ {project.title}")
+                    if project.source == "hf_papers":
+                        self._auto_reject_if_impractical(db, project, summary_data)
                     return {"success": True, "project_id": project.id}
                 else:
                     logger.warning(f"⚠️ {project.title}: {summary_data.get('error')}")
@@ -161,6 +163,24 @@ class BatchSummary:
     @staticmethod
     def _mark_processed(db, project_id: int, state: int) -> None:
         db.query(ContentItem).filter(ContentItem.id == project_id).update({"processed": state})
+
+    @staticmethod
+    def _auto_reject_if_impractical(db, project: ContentItem, summary_data: dict) -> None:
+        """HF Papers 专用：NewsAnalyzer 对 hf_papers 走的是实用性/应用性打分（见
+        news_analyzer.py._build_hf_paper_prompt），低于阈值视为学术性过强，
+        直接标 rejected（不删记录，只是不进 get_unreviewed_news() 的审查队列，
+        也就永远不会被推送）。"""
+        score = summary_data.get("score", 0) or 0
+        threshold = settings.hf_papers_practicality_threshold
+        if score >= threshold:
+            return
+        db.query(ContentItem).filter(ContentItem.id == project.id).update(
+            {"review_status": "rejected"}
+        )
+        db.commit()
+        logger.info(
+            f"🚫 HF Paper 实用性不足，自动过滤: {project.title} (score={score} < {threshold})"
+        )
 
 
 if __name__ == '__main__':
