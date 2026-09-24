@@ -6,6 +6,7 @@ import feedparser
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+from app.api.http_retry import send_with_retry
 from app.logger import AppLogger
 from app.config import settings
 
@@ -68,35 +69,15 @@ class RSSClient:
     async def _fetch_feed(self, feed_url: str) -> Optional[str]:
         """获取 RSS 源内容"""
         client = await self._get_client()
-        last_exc: Exception | None = None
-
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                resp = await client.get(feed_url)
-                resp.raise_for_status()
-                return resp.text
-            except httpx.HTTPStatusError as e:
-                last_exc = e
-                status = e.response.status_code
-                if status == 429:
-                    wait = 2 ** attempt
-                    logger.warning(
-                        f"RSS 速率限制，{wait}s 后重试 ({attempt}/{self.max_retries}): {feed_url}"
-                    )
-                    await asyncio.sleep(wait)
-                    continue
-                logger.error(f"RSS HTTP 错误 {status}: {feed_url}")
-                return None
-            except httpx.RequestError as e:
-                last_exc = e
-                wait = 2 ** attempt
-                logger.warning(
-                    f"RSS 请求失败，{wait}s 后重试 ({attempt}/{self.max_retries}): {e}"
-                )
-                await asyncio.sleep(wait)
-
-        logger.error(f"RSS 多次重试后仍失败: {feed_url}")
-        return None
+        try:
+            resp = await send_with_retry(client, "GET", feed_url, max_retries=self.max_retries)
+        except httpx.TransportError as e:
+            logger.error(f"RSS 多次重试后仍失败: {feed_url}: {e!r}")
+            return None
+        if resp.is_error:
+            logger.error(f"RSS HTTP 错误 {resp.status_code}: {feed_url}")
+            return None
+        return resp.text
 
     def _parse_entry(self, entry: feedparser.FeedParserDict, feed_url: str) -> Optional[RSSFeedEntry]:
         """解析单个 RSS 条目"""

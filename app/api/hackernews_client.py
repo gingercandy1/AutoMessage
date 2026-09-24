@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 from typing import Optional, Dict, Any, List
+from app.api.http_retry import send_with_retry
 from app.logger import AppLogger
 
 logger = AppLogger.get(__name__)
@@ -69,34 +70,16 @@ class HackerNewsClient:
         **kwargs,
     ) -> httpx.Response:
         client = await self._get_client()
-        last_exc: Exception | None = None
-
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                resp = await client.request(method, path, params=params, **kwargs)
-                resp.raise_for_status()
-                return resp
-            except httpx.HTTPStatusError as e:
-                last_exc = e
-                status = e.response.status_code
-                if status == 429:
-                    wait = 2 ** attempt
-                    logger.warning(
-                        f"触发速率限制，{wait}s 后重试 ({attempt}/{self.max_retries}): {path}"
-                    )
-                    await asyncio.sleep(wait)
-                    continue
-                logger.error(f"HTTP 错误 {status}: {path}")
-                raise HackerNewsAPIError(f"HTTP {status} 错误: {path}") from e
-            except httpx.RequestError as e:
-                last_exc = e
-                wait = 2 ** attempt
-                logger.warning(
-                    f"请求失败，{wait}s 后重试 ({attempt}/{self.max_retries}): {e}"
-                )
-                await asyncio.sleep(wait)
-
-        raise HackerNewsAPIError(f"多次重试后仍失败: {path}") from last_exc
+        try:
+            resp = await send_with_retry(
+                client, method, path, max_retries=self.max_retries, params=params, **kwargs
+            )
+        except httpx.TransportError as e:
+            raise HackerNewsAPIError(f"多次重试后仍失败: {path}") from e
+        if resp.is_error:
+            logger.error(f"HTTP 错误 {resp.status_code}: {path}")
+            raise HackerNewsAPIError(f"HTTP {resp.status_code} 错误: {path}")
+        return resp
 
     async def _get_json(self, path: str, params: dict | None = None) -> Any | None:
         resp = await self._request("GET", path, params=params)

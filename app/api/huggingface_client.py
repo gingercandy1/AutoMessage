@@ -1,9 +1,9 @@
-import asyncio
 import fnmatch
 import os
 import httpx
 from pathlib import Path
 from typing import Any
+from app.api.http_retry import send_with_retry
 from app.logger import AppLogger
 
 logger = AppLogger.get(__name__)
@@ -100,43 +100,24 @@ class HuggingFaceClient:
     ) -> httpx.Response:
         client = await self._get_client()
         merged_headers = self._headers(headers)
-        last_exc: Exception | None = None
+        try:
+            resp = await send_with_retry(
+                client, method, url, max_retries=self.max_retries,
+                params=params, headers=merged_headers, **kwargs,
+            )
+        except httpx.TransportError as e:
+            raise HuggingFaceAPIError(f"多次重試後仍失敗: {url}") from e
 
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                resp = await client.request(
-                    method, url, params=params, headers=merged_headers, **kwargs
-                )
-                if resp.status_code == 404:
-                    return resp
-                resp.raise_for_status()
-                return resp
-            except httpx.HTTPStatusError as e:
-                last_exc = e
-                status = e.response.status_code
-                if status in (401, 403):
-                    logger.warning(f"權限不足或 token 無效: {url}")
-                    raise HuggingFaceAPIError(
-                        f"存取被拒絕 ({status})，請確認 token 是否有效或有權限: {url}"
-                    ) from e
-                if status == 429:
-                    wait = 2 ** attempt
-                    logger.warning(
-                        f"觸發速率限制，{wait}s 後重試 ({attempt}/{self.max_retries}): {url}"
-                    )
-                    await asyncio.sleep(wait)
-                    continue
-                logger.error(f"HTTP 錯誤 {status}: {url}")
-                raise HuggingFaceAPIError(f"HTTP {status} 錯誤: {url}") from e
-            except httpx.RequestError as e:
-                last_exc = e
-                wait = 2 ** attempt
-                logger.warning(
-                    f"請求失敗，{wait}s 後重試 ({attempt}/{self.max_retries}): {e}"
-                )
-                await asyncio.sleep(wait)
-
-        raise HuggingFaceAPIError(f"多次重試後仍失敗: {url}") from last_exc
+        status = resp.status_code
+        if status == 404 or not resp.is_error:
+            return resp
+        if status in (401, 403):
+            logger.warning(f"權限不足或 token 無效: {url}")
+            raise HuggingFaceAPIError(
+                f"存取被拒絕 ({status})，請確認 token 是否有效或有權限: {url}"
+            )
+        logger.error(f"HTTP 錯誤 {status}: {url}")
+        raise HuggingFaceAPIError(f"HTTP {status} 錯誤: {url}")
 
     async def _get_json(self, url: str, params: dict | None = None) -> Any | None:
         resp = await self._request("GET", url, params=params)

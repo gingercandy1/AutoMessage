@@ -2,6 +2,7 @@ import asyncio
 import re
 import httpx
 from typing import Optional, Dict, Any, List, Tuple
+from app.api.http_retry import send_with_retry
 from app.logger import AppLogger
 
 logger = AppLogger.get(__name__)
@@ -23,11 +24,13 @@ class GitHubClient:
     def __init__(self,
                  token: Optional[str] = None,
                  base_url: str = "https://api.github.com",
-                 timeout: float = 30.0):
+                 timeout: float = 30.0,
+                 max_retries: int = 3):
         if hasattr(self, "_initialized"):
             return
 
         self._initialized = True
+        self.max_retries = max_retries
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={
@@ -56,7 +59,9 @@ class GitHubClient:
             headers: Optional[dict] = None,
             allow_404: bool = False,
     ) -> Optional[httpx.Response]:
-        resp = await self._client.request(method, path, params=params, headers=headers)
+        resp = await send_with_retry(
+            self._client, method, path, max_retries=self.max_retries, params=params, headers=headers
+        )
 
         remaining = resp.headers.get("X-RateLimit-Remaining")
         if remaining is not None and int(remaining) < 50:
