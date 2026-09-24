@@ -272,6 +272,68 @@ def check_snapshot_staleness() -> CheckResult:
     finally:
         db.close()
 
+def _news_feed_urls() -> List[str]:
+    return [f.strip() for f in settings.news_rss_feeds.split(",") if f.strip()]
+
+
+def check_news_source_freshness(now: Optional[datetime] = None) -> CheckResult:
+    """W007: 按新闻来源、按 RSS feed 的产出新鲜度。W006 只看全局最新快照，
+    单个源失效（被反爬 429、feed 停更、改版解析为空）会被其他源掩盖；采集器
+    又会吞掉单个 feed 的失败，所以这里按 feed 逐个看最近一次产出时间。"""
+    from sqlalchemy import func
+    from app.collectors.news.news_base import NEWS_SOURCES
+
+    now = now or datetime.now(timezone.utc)
+    threshold = settings.watchdog_feed_stale_hours
+    db = SessionLocal()
+    try:
+        feed_col = MetricSnapshot.metrics["feed_url"].astext
+        last_by_feed = dict(
+            db.query(feed_col, func.max(MetricSnapshot.captured_at))
+            .filter(MetricSnapshot.source == "news")
+            .group_by(feed_col)
+            .all()
+        )
+        last_by_source = dict(
+            db.query(MetricSnapshot.source, func.max(MetricSnapshot.captured_at))
+            .filter(MetricSnapshot.source.in_([s for s in NEWS_SOURCES if s != "news"]))
+            .group_by(MetricSnapshot.source)
+            .all()
+        )
+    finally:
+        db.close()
+
+    disabled = set() if (settings.product_hunt_token or "").strip() else {"producthunt"}
+    targets = {f: last_by_feed.get(f) for f in _news_feed_urls()}
+    targets.update({s: last_by_source.get(s) for s in NEWS_SOURCES if s != "news" and s not in disabled})
+
+    never, stale = [], {}
+    for name, last in targets.items():
+        if last is None:
+            never.append(name)
+            continue
+        age_h = (now - last).total_seconds() / 3600
+        if age_h > threshold:
+            stale[name] = round(age_h, 1)
+
+    if not never and not stale:
+        return CheckResult("W007_NEWS_SOURCES", "ok", f"{len(targets)} 个新闻源都在 {threshold} 小时内有产出", {}, "")
+
+    parts = []
+    if never:
+        parts.append(f"{len(never)} 个源从没采到过内容")
+    if stale:
+        parts.append(f"{len(stale)} 个源超过 {threshold} 小时没有新内容")
+    return CheckResult(
+        "W007_NEWS_SOURCES",
+        "warning",
+        "；".join(parts) + "——可能是源站反爬、feed 停更或地址失效",
+        {"never": never, "stale_hours": stale},
+        "用 curl -A 'AIProjectBot/1.0' <feed> 看状态码和内容：429/403 加 HTML 页面多为反爬；"
+        "200 但最新条目很旧是 feed 停更，可从 NEWS_RSS_FEEDS 移除或换地址",
+    )
+
+
 async def run_all_checks() -> List[CheckResult]:
     results: List[CheckResult] = []
     results.append(await check_github_token())
@@ -281,4 +343,5 @@ async def run_all_checks() -> List[CheckResult]:
     results.append(check_infra_db())
     results.append(await check_redis())
     results.append(check_snapshot_staleness())
+    results.append(check_news_source_freshness())
     return results

@@ -242,6 +242,10 @@ class Settings(BaseSettings):
         default=25,
         description="快照/运行记录超时阈值（小时），超过则判为 stale"
     )
+    watchdog_feed_stale_hours: int = Field(
+        default=72,
+        description="单个新闻源/RSS feed 超过此时长（小时）没有产出则告警"
+    )
 
     # ============ Scheduler / 开机补跑 ============
     scheduler_timezone: str = Field(
