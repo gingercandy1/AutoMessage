@@ -14,6 +14,7 @@ from app.bot.renderers.base import BaseProjectRenderer
 from app.config import settings
 from app.database.models import ContentItem, Summary
 from app.logger import AppLogger
+from app.services.news_dedup import find_duplicate, fingerprint
 from app.services.news_service import NewsService
 
 logger = AppLogger.get(__name__)
@@ -252,6 +253,26 @@ class ReviewService:
         finally:
             db.close()
 
+    def _drop_duplicates(self, items: list[ContentItem]) -> list[ContentItem]:
+        """送审前判重：与近期已送审/已通过的新闻、或本批里排在前面的新闻报道同一事件的，
+        标记 review_status='duplicate' 并剔除。采集侧去重只覆盖单个采集器的单批，
+        跨采集器、跨轮次的同一事件只能在这个所有来源汇合的关口拦下。"""
+        seen = self.news.get_recent_review_fingerprints()
+        kept: list[ContentItem] = []
+        for item in items:
+            one_liner = getattr(item.summary, "one_liner", None) if item.summary else None
+            fp = fingerprint(item.id, item.title, one_liner)
+            dup_of = find_duplicate(fp, seen)
+            if dup_of:
+                self.news.set_review_status(item.id, "duplicate")
+                logger.info(f"⏩ 同一事件已送审，跳过 item={item.id} dup_of={dup_of.item_id}: {item.title}")
+                continue
+            seen.append(fp)
+            kept.append(item)
+        if len(kept) < len(items):
+            logger.info(f"🔄 送审判重: {len(items)} -> {len(kept)}")
+        return kept
+
     async def send_for_review(self, bot: Bot) -> int:
         """推送待审查新闻。优先推送到审查频道（review_chat_id，bot 需为该频道
         管理员），未配置时退回各审查管理员私聊（review_admin_ids）。
@@ -261,7 +282,7 @@ class ReviewService:
         expired = self.news.expire_stale_unreviewed()
         if expired:
             logger.info(f"🗄 {expired} 条超出送审时效窗口，标记 expired 不再送审")
-        items = self.news.get_unreviewed_news(limit=50)
+        items = self._drop_duplicates(self.news.get_unreviewed_news(limit=50))
         if settings.review_chat_id:
             targets = [settings.review_chat_id]
             dest = f"审查频道 {settings.review_chat_id}"

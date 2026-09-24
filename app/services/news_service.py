@@ -8,6 +8,7 @@ from app.collectors.news.news_base import NEWS_SOURCES
 from app.config import settings
 from app.database import SessionLocal
 from app.database.models import ContentItem, UserFavorite, Summary
+from app.services.news_dedup import StoryFingerprint, fingerprint
 
 
 class NewsService:
@@ -214,6 +215,25 @@ class NewsService:
                 .update({"review_status": "expired"}, synchronize_session=False)
             db.commit()
             return expired
+        finally:
+            db.close()
+
+    def get_recent_review_fingerprints(self, days: int | None = None) -> List[StoryFingerprint]:
+        """近 days 天内已送审/已通过的新闻指纹，作为送审前跨源、跨轮次判重的比对基准。"""
+        if days is None:
+            days = settings.review_dedup_days
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        db: Session = SessionLocal()
+        try:
+            rows = db.query(ContentItem.id, ContentItem.title, Summary.one_liner) \
+                .outerjoin(Summary, Summary.project_id == ContentItem.id) \
+                .filter(
+                    (ContentItem.source.in_(self.news_sources)) &
+                    (ContentItem.review_status.in_(["pending", "approved"])) &
+                    (ContentItem.discovered_at >= cutoff)
+                ) \
+                .all()
+            return [fingerprint(r.id, r.title, r.one_liner) for r in rows]
         finally:
             db.close()
 

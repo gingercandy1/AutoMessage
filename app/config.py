@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         default=30,
         description="送审时效窗口（天）：只有 discovered_at 在此窗口内的新闻才会推送审查；超窗的会被标记 review_status='expired' 收尾，不再重复参与送审"
     )
+    review_dedup_days: int = Field(
+        default=7,
+        description="送审前判重回看窗口（天）：与此窗口内已送审/已通过的新闻是同一事件的，标记 review_status='duplicate' 不再送审"
+    )
 
     # ============ Database ============
     database_url: str = Field(
